@@ -6,8 +6,9 @@ const eventsWithRole = (role: AnchorRole) =>
   trading.locator.events.filter((event) => event.role === role);
 
 describe('交易類別', () => {
-  it('前綴不為空 —— 偵測完全靠它', () => {
-    expect(trading.locator.prefix.length).toBeGreaterThan(0);
+  it('前綴是變體集合 —— 前綴本身也會被聽錯', () => {
+    expect(trading.locator.prefixes.length).toBeGreaterThan(0);
+    expect(trading.locator.prefixes).toContain('這筆');
   });
 
   it('恰有一種開啟事件', () => {

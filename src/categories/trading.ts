@@ -13,7 +13,8 @@ export const trading: Category = {
 
   locator: {
     kind: 'cue',
-    prefix: '這筆',
+    // 同音變體：實測「這筆進場」曾被轉成「這比進場」。
+    prefixes: ['這筆', '這比', '這畢', '這必'],
     proximity: 24,
     events: [
       {

@@ -27,10 +27,13 @@ export type Locator = CueLocator;
 export interface CueLocator {
   readonly kind: 'cue';
   /**
-   * 決定性偵測器。前綴在 231,715 段同題材語料中僅出現 1 次，
-   * 在三支自錄樣本中召回率 100%（ADR-0001）。
+   * 決定性偵測器，以變體集合而非單一字串表示。
+   *
+   * 前綴本身也會被語音辨識聽錯（實測「這筆進場」被轉成「這比進場」，同音 zhè bǐ）。
+   * 偵測層的錯是無聲的 —— 漏掉就永遠不會被發現 —— 所以這裡寧可多抓，
+   * 誤報交給分類器濾掉（ADR-0001）。
    */
-  readonly prefix: string;
+  readonly prefixes: readonly string[];
   /** 前綴後取多少字交給分類器判讀。 */
   readonly proximity: number;
   readonly events: readonly CueEvent[];
@@ -148,4 +151,60 @@ export interface PlanMetadata {
   readonly title: string;
   readonly description: string;
   readonly hashtags: readonly string[];
+}
+
+// ── 逐字稿 ─────────────────────────────────────────────────────────
+
+export interface Transcript {
+  readonly source: TranscriptSource;
+  readonly language: string;
+  readonly segments: readonly TranscriptSegment[];
+}
+
+export interface TranscriptSource {
+  readonly video: string;
+  readonly durationSeconds: number;
+  readonly engine: string;
+}
+
+/** 段落邊界是語音停頓，不是閱讀單位 —— 不可以拿來當比對或斷行的單位。 */
+export interface TranscriptSegment {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+// ── 錨點與區段 ─────────────────────────────────────────────────────
+
+export interface AnchorDocument {
+  readonly source: TranscriptSource;
+  readonly anchors: readonly Anchor[];
+  readonly spans: readonly Span[];
+  /** 無法配對的錨點，保留下來讓使用者看得見自己漏喊了什麼。 */
+  readonly unpaired: readonly Anchor[];
+}
+
+export interface Anchor {
+  readonly at: number;
+  readonly role: AnchorRole;
+  readonly eventId: string;
+  readonly outcome?: string;
+  /** 前綴附近的原文，讓使用者能判斷分類對不對。 */
+  readonly excerpt: string;
+}
+
+export interface Span {
+  readonly index: number;
+  readonly openAt: number;
+  readonly closeAt: number;
+  readonly outcome: string;
+  readonly window: SourcingWindow;
+}
+
+/** 實際會被讀取逐字稿的範圍，碰到鄰近區段的錨點就截斷。 */
+export interface SourcingWindow {
+  readonly openFrom: number;
+  readonly openTo: number;
+  readonly closeFrom: number;
+  readonly closeTo: number;
 }
