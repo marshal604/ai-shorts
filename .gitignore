@@ -1,0 +1,8 @@
+node_modules/
+out/
+*.wav
+*.gray
+.DS_Store
+.env
+.env.*
+!.env.example
