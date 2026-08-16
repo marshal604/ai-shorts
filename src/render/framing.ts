@@ -123,16 +123,76 @@ export interface Placement {
   readonly offsetY: number;
 }
 
-/** 等比縮放後置中於圖表帶。 */
-export function placeInChartBand(width: number, height: number): Placement {
-  const scale = Math.min(CANVAS.width / width, BANDS.chart.height / height);
-  const scaledWidth = toEvenSize(width * scale);
-  const scaledHeight = toEvenSize(height * scale);
+/**
+ * 整支短片共用的圖表矩形。
+ *
+ * 每個片段的裁切框由內容決定，長寬比各不相同；若讓每段各自去適配圖表帶，
+ * 圖表的大小與位置會在每次切換片段時跳動 —— 實測同一支片出現 806x810、
+ * 1080x598、1080x654 三種矩形，連兩個全幅段彼此都不同。觀眾看到的就是
+ * 畫面忽大忽小、上下亂跑。
+ *
+ * 所以矩形固定，改讓裁切框去遷就它（見 conformToChartAspect）。
+ * 全幅與放大的差別因此變成「同樣大小的窗口裡看到多少範圍」，而不是
+ * 「窗口本身變形」—— 那才是縮放該有的樣子。
+ */
+const CHART_RECT_HEIGHT = 620;
+
+export const CHART_RECT: Placement = {
+  scaledWidth: CANVAS.width,
+  scaledHeight: CHART_RECT_HEIGHT,
+  offsetX: 0,
+  offsetY: toEvenOffset(BANDS.chart.y + (BANDS.chart.height - CHART_RECT_HEIGHT) / 2),
+};
+
+/**
+ * 矩形的比例貼近螢幕錄影裡圖表區的比例（實測約 1.75），而不是圖表帶的比例。
+ *
+ * 兩者差距若太大，湊比例時就得砍掉大量內容：以 4:3 的矩形去套 1.75 的畫面，
+ * 全幅模式會被從左邊切掉三分之一，結果與放大模式看起來一模一樣 ——
+ * 兩種構圖就此塌陷成同一個視角。
+ */
+const TARGET_ASPECT = CANVAS.width / CHART_RECT_HEIGHT;
+
+/** 所有片段共用同一個矩形，所以不再需要逐段計算。 */
+export function placeInChartBand(): Placement {
+  return CHART_RECT;
+}
+
+/**
+ * 把裁切框調成共用矩形的長寬比。
+ *
+ * **保留寬度，調整高度。** 寬度就是縮放程度 —— 放大模式取窄、全幅模式取寬，
+ * 那是兩者唯一的差別。若改成調整寬度來湊比例，所有片段的高度都一樣，
+ * 寬度就會被算成同一個值，兩種模式看起來完全相同。
+ *
+ * 高度以內容的垂直中心為準往兩側取，價格行為才會留在畫面裡。
+ * 只有在需要的高度超出畫面時，才退而收縮寬度。
+ */
+export function conformToChartAspect(
+  framing: FramingPlan,
+  sourceWidth: number,
+  sourceHeight: number,
+): FramingPlan {
+  const axisWidth = framing.axis?.width ?? 0;
+  const totalWidth = framing.body.width + axisWidth;
+  const centre = framing.body.y + framing.body.height / 2;
+
+  const wantedHeight = toEvenSize(totalWidth / TARGET_ASPECT);
+  if (wantedHeight <= sourceHeight) {
+    const y = toEvenOffset(Math.max(0, Math.min(centre - wantedHeight / 2, sourceHeight - wantedHeight)));
+    return {
+      body: { ...framing.body, y, height: wantedHeight },
+      ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y, height: wantedHeight } }),
+    };
+  }
+
+  // 需要的高度超出畫面：改為收縮寬度，右緣不動（那裡是價格軸與最新的 K 棒）。
+  const height = toEvenSize(sourceHeight);
+  const bodyWidth = toEvenSize(Math.max(2, height * TARGET_ASPECT - axisWidth));
+  const bodyRight = framing.body.x + framing.body.width;
   return {
-    scaledWidth,
-    scaledHeight,
-    offsetX: toEvenOffset((CANVAS.width - scaledWidth) / 2),
-    offsetY: toEvenOffset(BANDS.chart.y + (BANDS.chart.height - scaledHeight) / 2),
+    body: { x: toEvenOffset(Math.max(0, bodyRight - bodyWidth)), y: 0, width: bodyWidth, height },
+    ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y: 0, height } }),
   };
 }
 
@@ -219,7 +279,7 @@ export async function planCutFraming(
   const midpoint = cut.start + (cut.end - cut.start) / 2;
   const sample = await sampleFrame(video, midpoint, sourceWidth, sourceHeight);
   const layout = detectContentLayout(sample.gray, sample.width, sample.height);
-  return planFraming(
+  const framing = planFraming(
     layout,
     chrome,
     cut.framing,
@@ -228,4 +288,5 @@ export async function planCutFraming(
     sample.width,
     sample.height,
   );
+  return conformToChartAspect(framing, sourceWidth, sourceHeight);
 }

@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { detectChrome, detectContentLayout } from '../src/render/crop.ts';
-import { framingWidth, placeInChartBand, planFraming } from '../src/render/framing.ts';
+import {
+  CHART_RECT,
+  conformToChartAspect,
+  framingWidth,
+  placeInChartBand,
+  planFraming,
+} from '../src/render/framing.ts';
 import { BANDS, CANVAS } from '../src/render/layout.ts';
 import type { ChromeInsets } from '../src/render/crop.ts';
 
@@ -78,19 +84,69 @@ describe('裁切框換算', () => {
   });
 });
 
-describe('置入圖表帶', () => {
-  it('等比縮放後不超出圖表帶', () => {
-    for (const [width, height] of [[2000, 1500], [3258, 1826], [800, 2000]] as const) {
-      const place = placeInChartBand(width, height);
-      expect(place.scaledWidth).toBeLessThanOrEqual(CANVAS.width);
-      expect(place.scaledHeight).toBeLessThanOrEqual(BANDS.chart.height);
+describe('共用的圖表矩形', () => {
+  it('整支片只有一個矩形 —— 每段各自適配會讓畫面忽大忽小、上下亂跑', () => {
+    expect(placeInChartBand()).toEqual(CHART_RECT);
+  });
+
+  it('矩形佔滿寬度、置中於圖表帶且不越界', () => {
+    expect(CHART_RECT.scaledWidth).toBe(CANVAS.width);
+    expect(CHART_RECT.scaledHeight).toBeLessThanOrEqual(BANDS.chart.height);
+    expect(CHART_RECT.offsetY).toBeGreaterThanOrEqual(BANDS.chart.y);
+    expect(CHART_RECT.offsetY + CHART_RECT.scaledHeight).toBeLessThanOrEqual(
+      BANDS.chart.y + BANDS.chart.height,
+    );
+  });
+
+  it('矩形的比例貼近螢幕錄影的內容比例 —— 差太多會讓兩種構圖塌陷成同一個', () => {
+    const aspect = CHART_RECT.scaledWidth / CHART_RECT.scaledHeight;
+    expect(aspect).toBeGreaterThan(1.6);
+    expect(aspect).toBeLessThan(1.9);
+  });
+
+  it('每個片段的裁切框都被調成同一個長寬比', () => {
+    const target = CHART_RECT.scaledWidth / CHART_RECT.scaledHeight;
+    for (const name of ['chart-0140', 'chart-0044']) {
+      for (const mode of ['full', 'roi'] as const) {
+        const conformed = conformToChartAspect(plan(name, mode), SOURCE.width, SOURCE.height);
+        const aspect = framingWidth(conformed) / conformed.body.height;
+        expect(aspect).toBeCloseTo(target, 1);
+      }
     }
   });
 
-  it('置中，且補邊區不會被推出畫布', () => {
-    const place = placeInChartBand(3258, 1826);
-    expect(place.offsetX + place.scaledWidth).toBeLessThanOrEqual(CANVAS.width);
-    expect(place.offsetY + place.scaledHeight).toBeLessThanOrEqual(CANVAS.height);
+  it('調整後仍不超出來源畫面', () => {
+    for (const name of ['chart-0140', 'chart-0044']) {
+      for (const mode of ['full', 'roi'] as const) {
+        const c = conformToChartAspect(plan(name, mode), SOURCE.width, SOURCE.height);
+        expect(c.body.x).toBeGreaterThanOrEqual(0);
+        expect(c.body.y).toBeGreaterThanOrEqual(0);
+        expect(c.body.x + c.body.width).toBeLessThanOrEqual(SOURCE.width);
+        expect(c.body.y + c.body.height).toBeLessThanOrEqual(SOURCE.height);
+      }
+    }
+  });
+
+  it('湊比例時保留寬度 —— 寬度就是縮放程度，改它會讓兩種構圖看起來一樣', () => {
+    for (const mode of ['full', 'roi'] as const) {
+      const before = plan('chart-0044', mode);
+      const after = conformToChartAspect(before, SOURCE.width, SOURCE.height);
+      expect(after.body.width).toBe(before.body.width);
+    }
+  });
+
+  it('兩種構圖在調整後仍然是不同的視角', () => {
+    const full = conformToChartAspect(plan('chart-0044', 'full'), SOURCE.width, SOURCE.height);
+    const roi = conformToChartAspect(plan('chart-0044', 'roi'), SOURCE.width, SOURCE.height);
+    expect(framingWidth(full)).toBeGreaterThan(framingWidth(roi) * 1.4);
+  });
+
+  it('高度以內容的垂直中心為準 —— 價格行為要留在畫面裡', () => {
+    const before = plan('chart-0044', 'roi');
+    const after = conformToChartAspect(before, SOURCE.width, SOURCE.height);
+    const centreBefore = before.body.y + before.body.height / 2;
+    const centreAfter = after.body.y + after.body.height / 2;
+    expect(Math.abs(centreAfter - centreBefore)).toBeLessThan(60);
   });
 });
 

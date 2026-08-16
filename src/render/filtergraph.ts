@@ -1,6 +1,6 @@
 import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
 import { BACKGROUND, CANVAS, OUTPUT_FPS } from './layout.ts';
-import { framingWidth, placeInChartBand } from './framing.ts';
+import { placeInChartBand } from './framing.ts';
 import type { FramingPlan } from './framing.ts';
 import { buildMusicChain } from './music.ts';
 
@@ -61,7 +61,7 @@ const cropOf = (box: { x: number; y: number; width: number; height: number }): s
 function videoChain(cut: Cut, index: number, framing: FramingPlan): string[] {
   const speed = cut.speed ?? 1;
   const pts = speed === 1 ? 'PTS-STARTPTS' : `(PTS-STARTPTS)/${speed}`;
-  const place = placeInChartBand(framingWidth(framing), framing.body.height);
+  const place = placeInChartBand();
   const tail = [
     `scale=${place.scaledWidth}:${place.scaledHeight}`,
     `pad=${CANVAS.width}:${CANVAS.height}:${place.offsetX}:${place.offsetY}:color=${BACKGROUND}`,
