@@ -5,6 +5,7 @@ import { run } from '../exec.ts';
 import { PlanValidationError } from '../errors.ts';
 import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
 import { buildFfmpegArgs, cutDuration, planDuration } from './filtergraph.ts';
+import { planCutFraming } from './framing.ts';
 import { measureCard, renderCardPng } from './text.ts';
 
 export interface RenderResult {
@@ -310,7 +311,17 @@ export async function renderPlan(
   const workDir = await mkdtemp(join(tmpdir(), 'ai-shorts-cards-'));
   try {
     const cardImagePaths = await writeCardImages(plan.cards, workDir);
-    await run('ffmpeg', buildFfmpegArgs(plan, { outputPath: videoPath, cardImagePaths, music }));
+    // 每個片段取一幀算裁切框，段內固定不動 —— 逐幀重算會讓畫面持續抖動。
+    const framings = [];
+    for (const cut of plan.cuts) {
+      framings.push(
+        await planCutFraming(plan.source.video, cut, plan.source.width, plan.source.height),
+      );
+    }
+    await run(
+      'ffmpeg',
+      buildFfmpegArgs(plan, { outputPath: videoPath, cardImagePaths, framings, music }),
+    );
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

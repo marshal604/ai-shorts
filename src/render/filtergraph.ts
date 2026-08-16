@@ -1,5 +1,7 @@
 import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
-import { BACKGROUND, CANVAS, OUTPUT_FPS, chartPlacement } from './layout.ts';
+import { BACKGROUND, CANVAS, OUTPUT_FPS } from './layout.ts';
+import { framingWidth, placeInChartBand } from './framing.ts';
+import type { FramingPlan } from './framing.ts';
 import { buildMusicChain } from './music.ts';
 
 /** 片段輸出到成品上的實際秒數（快轉後）。 */
@@ -15,6 +17,8 @@ export interface RenderInputs {
   readonly outputPath: string;
   /** 每張文案卡對應一個已寫到磁碟的透明點陣圖。順序需與 plan.cards 一致。 */
   readonly cardImagePaths: readonly string[];
+  /** 每個片段各自的裁切計畫，順序需與 plan.cuts 一致（ADR-0003）。 */
+  readonly framings: readonly FramingPlan[];
   readonly music: MusicConfig;
 }
 
@@ -47,19 +51,35 @@ function cardInputArgs(paths: readonly string[], duration: number): string[] {
   ]);
 }
 
-function videoChain(cut: Cut, index: number, sourceWidth: number, sourceHeight: number): string {
-  const place = chartPlacement(sourceWidth, sourceHeight, cut.framing);
+const cropOf = (box: { x: number; y: number; width: number; height: number }): string =>
+  `crop=${box.width}:${box.height}:${box.x}:${box.y}`;
+
+/**
+ * 一個片段的影像鏈。偵測到獨立的價格軸時，把它水平接到主體右緣，
+ * 中間會隨時間變動的死留白就此消失（ADR-0003）。
+ */
+function videoChain(cut: Cut, index: number, framing: FramingPlan): string[] {
   const speed = cut.speed ?? 1;
   const pts = speed === 1 ? 'PTS-STARTPTS' : `(PTS-STARTPTS)/${speed}`;
-
-  return [
-    `[${index}:v]setpts=${pts}`,
-    `fps=${OUTPUT_FPS}`,
-    `crop=${place.crop.width}:${place.crop.height}:${place.crop.x}:${place.crop.y}`,
+  const place = placeInChartBand(framingWidth(framing), framing.body.height);
+  const tail = [
     `scale=${place.scaledWidth}:${place.scaledHeight}`,
     `pad=${CANVAS.width}:${CANVAS.height}:${place.offsetX}:${place.offsetY}:color=${BACKGROUND}`,
     `setsar=1[v${index}]`,
-  ].join(',');
+  ];
+
+  if (framing.axis === undefined) {
+    return [
+      [`[${index}:v]setpts=${pts}`, `fps=${OUTPUT_FPS}`, cropOf(framing.body), ...tail].join(','),
+    ];
+  }
+
+  return [
+    `[${index}:v]setpts=${pts},fps=${OUTPUT_FPS},split=2[b${index}][a${index}]`,
+    `[b${index}]${cropOf(framing.body)}[bc${index}]`,
+    `[a${index}]${cropOf(framing.axis)}[ac${index}]`,
+    [`[bc${index}][ac${index}]hstack=inputs=2`, ...tail].join(','),
+  ];
 }
 
 /** 逐張把文案卡疊到已拼接的影像上，各自只在自己的時間區間內顯示。 */
@@ -85,8 +105,9 @@ function cardChains(cards: readonly Card[], firstCardInput: number): {
 }
 
 function filterComplex(plan: Plan, inputs: RenderInputs, duration: number): string {
-  const { width, height } = plan.source;
-  const chains = plan.cuts.map((cut, index) => videoChain(cut, index, width, height));
+  const chains = plan.cuts.flatMap((cut, index) =>
+    videoChain(cut, index, inputs.framings[index] ?? { body: { x: 0, y: 0, width: plan.source.width, height: plan.source.height } }),
+  );
 
   const concatLabels = plan.cuts.map((_, index) => `[v${index}]`).join('');
   chains.push(`${concatLabels}concat=n=${plan.cuts.length}:v=1:a=0[vbase]`);

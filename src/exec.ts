@@ -63,3 +63,38 @@ export function run(
     });
   });
 }
+
+/**
+ * 與 run 相同，但把 stdout 當二進位收。
+ *
+ * run 會用 toString() 逐塊轉字串，像素資料經過 UTF-8 解碼會被破壞 ——
+ * 無效位元組被換成替代字元，長度也對不上。
+ */
+export function runBinary(
+  command: string,
+  args: readonly string[],
+): Promise<{ readonly stdout: Buffer; readonly stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (cause: Error) => {
+      reject(new ExternalToolError(command, null, `無法執行 ${command}：${cause.message}`));
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout: Buffer.concat(chunks), stderr });
+        return;
+      }
+      const tail = stderr.trim().split('\n').slice(-12).join('\n');
+      reject(new ExternalToolError(command, code, `${command} 以 ${code} 結束：\n${tail}`));
+    });
+  });
+}
