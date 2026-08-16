@@ -17,21 +17,34 @@ import type { Anchor, Category, Span, SourcingWindow } from '../types.ts';
  */
 export const REPEAT_WINDOW_SECONDS = 90;
 
+export interface CollapseResult {
+  readonly kept: readonly Anchor[];
+  /** 被視為重複而丟掉的錨點。丟掉的東西必須看得見。 */
+  readonly dropped: readonly Anchor[];
+}
+
 export function collapseRepeats(
   anchors: readonly Anchor[],
   windowSeconds: number = REPEAT_WINDOW_SECONDS,
-): Anchor[] {
-  const collapsed: Anchor[] = [];
+): CollapseResult {
+  const kept: Anchor[] = [];
+  const dropped: Anchor[] = [];
+
   for (const anchor of anchors) {
-    const previous = collapsed[collapsed.length - 1];
+    const previous = kept[kept.length - 1];
+    // 比對 eventId 而非只比角色：先部分止盈再全部止盈是兩個不同的事件，
+    // 只看角色會把後者當成重複丟掉，結果標成「部分止盈」。
     const isRepeat =
       previous !== undefined &&
-      previous.role === anchor.role &&
+      previous.eventId === anchor.eventId &&
       anchor.at - previous.at <= windowSeconds;
-    if (isRepeat) continue;
-    collapsed.push(anchor);
+    if (isRepeat) {
+      dropped.push(anchor);
+      continue;
+    }
+    kept.push(anchor);
   }
-  return collapsed;
+  return { kept, dropped };
 }
 
 export interface PairingResult {
@@ -111,7 +124,8 @@ export function buildSpans(
   category: Category,
   durationSeconds: number,
 ): { readonly spans: readonly Span[]; readonly unpaired: readonly Anchor[] } {
-  const { pairs, unpaired } = pairAnchors(collapseRepeats(anchors));
+  const { kept, dropped } = collapseRepeats(anchors);
+  const { pairs, unpaired } = pairAnchors(kept);
 
   const spans = pairs.map((pair, index) => {
     const previous = pairs[index - 1];
@@ -125,5 +139,5 @@ export function buildSpans(
     } satisfies Span;
   });
 
-  return { spans, unpaired };
+  return { spans, unpaired: [...unpaired, ...dropped] };
 }

@@ -4,10 +4,10 @@ import { trading } from '../src/categories/trading.ts';
 import type { Anchor } from '../src/types.ts';
 
 const open = (at: number): Anchor => ({ at, role: 'open', eventId: 'entry', excerpt: '這筆進場' });
-const close = (at: number, outcome = '止損'): Anchor => ({
+const close = (at: number, outcome = '止損', eventId = 'stop-loss'): Anchor => ({
   at,
   role: 'close',
-  eventId: 'stop-loss',
+  eventId,
   outcome,
   excerpt: '這筆止損',
 });
@@ -15,16 +15,28 @@ const close = (at: number, outcome = '止損'): Anchor => ({
 describe('重複喊的錨點', () => {
   it('相隔數秒的同一個事件收斂成一個', () => {
     // 實測：講者說完「那這筆我們就是止盈」兩秒後又說「這筆止盈，所以 1.27R 我們拿到了」
-    expect(collapseRepeats([close(316), close(318)])).toHaveLength(1);
+    expect(collapseRepeats([close(316), close(318)]).kept).toHaveLength(1);
   });
 
   it('相隔數分鐘的同角色錨點不收斂 —— 那是兩筆交易，不是重複', () => {
     // 沒有時間窗的話，漏掉一個開始錨點會讓兩筆交易的結束被併成一個，兩筆一起消失。
-    expect(collapseRepeats([close(316), close(606)])).toHaveLength(2);
+    expect(collapseRepeats([close(316), close(606)]).kept).toHaveLength(2);
   });
 
   it('不同角色不會被收斂', () => {
-    expect(collapseRepeats([open(100), close(110)])).toHaveLength(2);
+    expect(collapseRepeats([open(100), close(110)]).kept).toHaveLength(2);
+  });
+
+  it('不同事件不會被收斂 —— 先部分止盈再全部止盈是兩件事', () => {
+    const partial = close(600, '部分止盈', 'partial-take-profit');
+    const full = close(645, '止盈', 'take-profit');
+    expect(collapseRepeats([partial, full]).kept).toHaveLength(2);
+  });
+
+  it('被當成重複丟掉的錨點會被交出來，不會憑空消失', () => {
+    const { kept, dropped } = collapseRepeats([close(316), close(318)]);
+    expect(kept).toHaveLength(1);
+    expect(dropped.map((anchor) => anchor.at)).toEqual([318]);
   });
 });
 

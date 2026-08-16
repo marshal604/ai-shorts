@@ -194,13 +194,24 @@ export function buildCardSvg(card: Card): string {
   ].join('');
 }
 
+export interface CardFit {
+  readonly lines: number;
+  readonly maxLines: number;
+  readonly overflows: boolean;
+}
+
 /**
- * 一張卡最多容納幾個字。超過的部分會被截掉 —— 而卡就是敘事本身，
- * 截掉等於句子講一半，所以這個上限要在驗證階段擋下，不能等到成品才發現。
+ * 這張卡放不放得下。
+ *
+ * 不能用「每行字數 × 行數」估算 —— 實際斷行以 token 為單位，
+ * 「1.19」「FVG」不可拆，所以會比字數上限更早換行。估算會放行一段
+ * 其實會被截掉的文字，而卡就是敘事本身，截掉等於句子講一半。
+ * 這裡直接跑一次真正的斷行來判斷。
  */
-export function maxTextLength(kind: CardKind): number {
+export function measureCard(kind: CardKind, text: string): CardFit {
   const style = STYLES[kind];
-  return style.maxCharsPerLine * style.maxLines;
+  const lines = wrapChinese(text, style.maxCharsPerLine).length;
+  return { lines, maxLines: style.maxLines, overflows: lines > style.maxLines };
 }
 
 export function renderCardPng(card: Card): Buffer {

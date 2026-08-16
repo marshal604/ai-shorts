@@ -1,5 +1,4 @@
-import { basename, join } from 'node:path';
-import { resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { transcribe } from '../transcribe/transcribe.ts';
 import { prepareTranscript } from '../transcribe/correct.ts';
@@ -22,20 +21,43 @@ function jobName(video: string): string {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const video = argv.find((arg) => !arg.startsWith('--'));
+  // 帶值旗標的值不可以被當成位置參數 —— 否則 `--out dist video.mov` 會去轉錄 dist。
+  const positional: string[] = [];
+  let outValue: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === undefined) continue;
+    if (arg === '--out') {
+      outValue = argv[index + 1];
+      if (outValue === undefined || outValue.startsWith('--')) {
+        log(USAGE);
+        process.exitCode = 1;
+        return;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--')) continue;
+    positional.push(arg);
+  }
+
+  const video = positional[0];
   if (video === undefined) {
     log(USAGE);
     process.exitCode = 1;
     return;
   }
-  const outFlag = argv.indexOf('--out');
-  const outDir = resolve(outFlag >= 0 ? (argv[outFlag + 1] ?? 'out') : 'out');
-  const outputPath = join(outDir, jobName(video), 'transcript.json');
+  const outDir = resolve(outValue ?? 'out');
+  const jobDir = join(outDir, jobName(video));
+  // 語音辨識的原始輸出寫在自己的檔案，準備後的結果寫在 transcript.json。
+  // 兩者分開，重跑時才不會拿已經校正過的內容當成原始輸入再校正一次。
+  const rawPath = join(jobDir, 'transcript.raw.json');
+  const outputPath = join(jobDir, 'transcript.json');
 
   log(`轉錄中…（本機執行，長片需要數分鐘）`);
   const { transcript, reused } = await transcribe({
     video: resolve(video),
-    outputPath,
+    outputPath: rawPath,
     category: trading,
     force: argv.includes('--force'),
   });
@@ -46,13 +68,11 @@ async function main(): Promise<void> {
   // 先把逐字稿校正成正確的，再讓下游使用 —— 否則偵測、分類、文案
   // 每一層都要各自容錯，而且各錯各的。
   log('校正錯字並標記事件中…');
-  const jobDir = join(outDir, jobName(video));
   const prepared = await prepareTranscript({
     transcript,
     category: trading,
     cacheDir: join(jobDir, '.cache'),
   });
-  await writeFile(join(jobDir, 'transcript.raw.json'), `${JSON.stringify(transcript, null, 2)}\n`, 'utf8');
   await writeFile(outputPath, `${JSON.stringify(prepared.transcript, null, 2)}\n`, 'utf8');
   log(`校正 ${prepared.changedSegments} 段、標記 ${prepared.markedEvents} 個事件（原始版保留在 transcript.raw.json）`);
 

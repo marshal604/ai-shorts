@@ -53,13 +53,36 @@ describe('由標記事件建立錨點', () => {
     expect(document.spans[0]?.outcome).toBe('止盈');
   });
 
-  it('沒有標記就沒有錨點，不會硬湊', () => {
+  it('標記過但沒找到事件，就是零個錨點', () => {
     const { document } = buildAnchors({
-      transcript: transcript([segment(100, '那這筆進場')]),
+      transcript: transcript([segment(100, '那這筆進場')], []),
       category: trading,
     });
     expect(document.anchors).toHaveLength(0);
     expect(document.spans).toHaveLength(0);
+  });
+
+  it('逐字稿沒經過標記階段時報錯 —— 靜靜產出空文件是無聲失敗', () => {
+    const raw = {
+      source: { video: '/tmp/a.mov', durationSeconds: 900, engine: 'test' },
+      language: 'zh',
+      segments: [segment(100, '那這筆進場')],
+    } as const;
+    expect(() => buildAnchors({ transcript: raw, category: trading })).toThrow(/標記/);
+  });
+
+  it('錨點時間依原句在段落中的位置內插，不是一律取段落起點', () => {
+    const long: TranscriptSegment = { start: 100, end: 140, text: '前面講了很多廢話然後那這筆進場' };
+    const { document } = buildAnchors({
+      transcript: transcript(
+        [long],
+        [{ segmentIndex: 0, eventId: 'entry', quote: '那這筆進場' }],
+      ),
+      category: trading,
+    });
+    // 原句在段落後段，錨點時間應該明顯晚於段落起點。
+    expect(document.anchors[0]?.at).toBeGreaterThan(120);
+    expect(document.anchors[0]?.at).toBeLessThan(140);
   });
 
   it('指向不存在的事件 id 的標記被忽略', () => {

@@ -5,7 +5,7 @@ import { run } from '../exec.ts';
 import { PlanValidationError } from '../errors.ts';
 import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
 import { buildFfmpegArgs, cutDuration, planDuration } from './filtergraph.ts';
-import { maxTextLength, renderCardPng } from './text.ts';
+import { measureCard, renderCardPng } from './text.ts';
 
 export interface RenderResult {
   readonly videoPath: string;
@@ -102,11 +102,11 @@ function validateCard(card: unknown, index: number, total: number, problems: str
   if (!isNonEmptyString(card['text'])) {
     problems.push(`${label}：text 必須是非空字串`);
   } else if (kind === 'title' || kind === 'caption') {
-    const limit = maxTextLength(kind);
-    if (card['text'].length > limit) {
+    const fit = measureCard(kind, card['text']);
+    if (fit.overflows) {
       problems.push(
-        `${label}：text 有 ${card['text'].length} 字，超過 ${kind} 的 ${limit} 字上限；` +
-          '超出的部分會被靜靜截掉，而卡就是敘事本身',
+        `${label}：這段文字會斷成 ${fit.lines} 行，超過 ${kind} 的 ${fit.maxLines} 行上限；` +
+          '超出的行會被靜靜截掉，而卡就是敘事本身',
       );
     }
   }

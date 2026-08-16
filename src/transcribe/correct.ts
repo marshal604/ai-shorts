@@ -32,11 +32,7 @@ const SYSTEM = [
   '只輸出 JSON，不要任何其他文字。',
 ].join('\n');
 
-function buildPrompt(
-  segments: readonly TranscriptSegment[],
-  category: Category,
-  offset: number,
-): string {
+function buildPrompt(segments: readonly TranscriptSegment[], category: Category): string {
   const corrections = Object.entries(category.glossary)
     .map(([wrong, right]) => `「${wrong}」應為「${right}」`)
     .join('；');
@@ -45,7 +41,9 @@ function buildPrompt(
     .map((event) => `- ${event.id}：${event.description}`)
     .join('\n');
 
-  const lines = segments.map((segment, index) => `${offset + index}\t${segment.text}`).join('\n');
+  // 每一批都從 0 編號。若沿用全域編號，模型在後續批次改回從 0 開始編號時
+  // 所有查找都會落空 —— 校正靜靜失效、事件標記全被丟掉，而且沒有任何錯誤。
+  const lines = segments.map((segment, index) => `${index}\t${segment.text}`).join('\n');
 
   return [
     `題材：${category.name}。`,
@@ -99,19 +97,30 @@ function parseBatch(
     const index = item['i'];
     const id = item['id'];
     if (typeof index !== 'number' || typeof id !== 'string' || !validEventIds.has(id)) continue;
-    if (index < offset || index >= offset + batch.length) continue;
+    if (index < 0 || index >= batch.length) continue;
     events.push({
-      segmentIndex: index,
+      segmentIndex: offset + index,
       eventId: id,
       quote: typeof item['quote'] === 'string' ? item['quote'] : '',
     });
+  }
+
+  // 完全沒有一個編號落在範圍內，代表模型用了我們沒預期的編號方式。
+  // 這種情況若默默沿用原文，校正與標記會整批失效而沒有任何跡象。
+  const inRange = [...textByIndex.keys()].filter((key) => key >= 0 && key < batch.length);
+  if (textByIndex.size > 0 && inRange.length === 0) {
+    throw new ExternalToolError(
+      'anthropic',
+      null,
+      `這一批的段落編號全部超出範圍（預期 0–${batch.length - 1}），無法對應回原段落`,
+    );
   }
 
   // 時間碼一律沿用原段落 —— 準備階段只准動文字與標記。
   return {
     segments: batch.map((segment, index) => ({
       ...segment,
-      text: textByIndex.get(offset + index) ?? segment.text,
+      text: textByIndex.get(index) ?? segment.text,
     })),
     events,
   };
@@ -143,7 +152,7 @@ export async function prepareTranscript(options: CorrectOptions): Promise<Correc
     const batch = original.slice(offset, offset + size);
     const { text } = await ask({
       system: SYSTEM,
-      prompt: buildPrompt(batch, options.category, offset),
+      prompt: buildPrompt(batch, options.category),
       maxTokens: 8192,
       cacheDir: options.cacheDir,
     });

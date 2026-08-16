@@ -7,8 +7,8 @@ import type { Transcript } from '../types.ts';
 const USAGE = `用法：npm run anchors -- <transcript.json>
 
 找出長影片裡的錨點與區段，產出 anchors.json。
-錨點以前綴字串比對偵測（決定性），再由 AI 批次分類過濾。
-AI 回應以輸入雜湊快取，同樣輸入重跑不再發出請求。
+事件由來源準備階段（transcribe）依語意標記，這裡只負責配對與算取材窗口，
+不會發出任何網路請求。前綴字串比對作為交叉檢查，不一致之處會列出來。
 
 stdout 只輸出錨點檔路徑，進度走 stderr。`;
 

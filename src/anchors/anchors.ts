@@ -8,6 +8,7 @@ import type {
   Disagreement,
   Transcript,
 } from '../types.ts';
+import { PlanValidationError } from '../errors.ts';
 import { detectCandidates } from './detect.ts';
 import { normalizeTranscript } from './normalize.ts';
 import { buildSpans } from './spans.ts';
@@ -22,7 +23,20 @@ export interface AnchorsResult {
   readonly candidateCount: number;
 }
 
-/** 標記落在哪一段，就用那一段的起始時間當錨點時間。 */
+/**
+ * 標記所依據的原句在段落中的位置決定錨點時間。
+ *
+ * 直接取段落起點會失去段內精度：語音辨識偶爾吐出數十秒的長段落，
+ * 而骨架的鉤子窗口只有三秒寬，差半分鐘就會剪到完全不相干的畫面。
+ */
+function anchorTime(segment: { start: number; end: number; text: string }, quote: string): number {
+  if (quote.length === 0) return segment.start;
+  const position = segment.text.indexOf(quote);
+  if (position < 0 || segment.text.length === 0) return segment.start;
+  const span = Math.max(0, segment.end - segment.start);
+  return segment.start + (span * position) / segment.text.length;
+}
+
 function toAnchors(transcript: Transcript, byId: ReadonlyMap<string, CueEvent>): Anchor[] {
   return (transcript.events ?? [])
     .flatMap((marked) => {
@@ -30,7 +44,7 @@ function toAnchors(transcript: Transcript, byId: ReadonlyMap<string, CueEvent>):
       const segment = transcript.segments[marked.segmentIndex];
       if (event === undefined || segment === undefined) return [];
       const anchor: Anchor = {
-        at: segment.start,
+        at: anchorTime(segment, marked.quote),
         role: event.role,
         eventId: event.id,
         excerpt: marked.quote.length > 0 ? marked.quote : segment.text,
@@ -51,20 +65,24 @@ function toAnchors(transcript: Transcript, byId: ReadonlyMap<string, CueEvent>):
 function findDisagreements(
   transcript: Transcript,
   category: Category,
-  anchors: readonly Anchor[],
-  toleranceSeconds: number,
 ): { readonly disagreements: Disagreement[]; readonly candidateCount: number } {
   const candidates = detectCandidates(normalizeTranscript(transcript), category.locator);
+
+  // 用標記自己帶的段落索引取涵蓋範圍，不要拿錨點時間去反查段落 ——
+  // 錨點時間是段內內插出來的，落在段落之間的空隙時反查會失敗，
+  // 結果把已經標記好的位置也報成漏標。
+  const covered = (transcript.events ?? [])
+    .map((marked) => transcript.segments[marked.segmentIndex])
+    .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
+
   const disagreements = candidates
     .filter((candidate) =>
-      anchors.every((anchor) => Math.abs(anchor.at - candidate.at) > toleranceSeconds),
+      covered.every((segment) => candidate.at < segment.start || candidate.at > segment.end),
     )
     .map((candidate) => ({ at: candidate.at, excerpt: candidate.excerpt }));
 
   return { disagreements, candidateCount: candidates.length };
 }
-
-const DISAGREEMENT_TOLERANCE_SECONDS = 8;
 
 /**
  * 逐字稿 → 錨點文件。
@@ -73,6 +91,15 @@ const DISAGREEMENT_TOLERANCE_SECONDS = 8;
  * 並算出取材窗口；字串比對退居交叉檢查。
  */
 export function buildAnchors(options: BuildAnchorsOptions): AnchorsResult {
+  // undefined 代表標記階段根本沒跑過（例如拿到未經準備的逐字稿），
+  // 空陣列代表跑過但沒找到。兩者都會產出零個區段，但只有前者是錯誤 ——
+  // 靜靜產出空文件正是 ADR-0001 禁止的無聲失敗。
+  if (options.transcript.events === undefined) {
+    throw new PlanValidationError(
+      '逐字稿沒有事件標記。請先跑來源準備階段（transcribe），不要直接使用原始逐字稿。',
+    );
+  }
+
   const byId = new Map(options.category.locator.events.map((event) => [event.id, event]));
   const anchors = toAnchors(options.transcript, byId);
 
@@ -81,12 +108,7 @@ export function buildAnchors(options: BuildAnchorsOptions): AnchorsResult {
     options.category,
     options.transcript.source.durationSeconds,
   );
-  const { disagreements, candidateCount } = findDisagreements(
-    options.transcript,
-    options.category,
-    anchors,
-    DISAGREEMENT_TOLERANCE_SECONDS,
-  );
+  const { disagreements, candidateCount } = findDisagreements(options.transcript, options.category);
 
   return {
     document: { source: options.transcript.source, anchors, spans, unpaired, disagreements },
