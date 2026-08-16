@@ -5,7 +5,7 @@ import { run } from '../exec.ts';
 import { PlanValidationError } from '../errors.ts';
 import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
 import { buildFfmpegArgs, cutDuration, planDuration } from './filtergraph.ts';
-import { planCutFraming } from './framing.ts';
+import { detectVideoChrome, planCutFraming } from './framing.ts';
 import { measureCard, renderCardPng } from './text.ts';
 
 export interface RenderResult {
@@ -311,11 +311,19 @@ export async function renderPlan(
   const workDir = await mkdtemp(join(tmpdir(), 'ai-shorts-cards-'));
   try {
     const cardImagePaths = await writeCardImages(plan.cards, workDir);
-    // 每個片段取一幀算裁切框，段內固定不動 —— 逐幀重算會讓畫面持續抖動。
+    // 介面元件一支影片量一次；裁切框每個片段算一次，段內固定不動 ——
+    // 逐幀重算會讓畫面持續抖動。
+    const lastCut = plan.cuts[plan.cuts.length - 1];
+    const chrome = await detectVideoChrome(
+      plan.source.video,
+      lastCut === undefined ? 0 : lastCut.end,
+      plan.source.width,
+      plan.source.height,
+    );
     const framings = [];
     for (const cut of plan.cuts) {
       framings.push(
-        await planCutFraming(plan.source.video, cut, plan.source.width, plan.source.height),
+        await planCutFraming(plan.source.video, cut, plan.source.width, plan.source.height, chrome),
       );
     }
     await run(

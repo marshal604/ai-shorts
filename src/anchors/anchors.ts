@@ -1,16 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type {
-  Anchor,
-  AnchorDocument,
-  Category,
-  CueEvent,
-  Disagreement,
-  Transcript,
-} from '../types.ts';
+import type { Anchor, AnchorDocument, Category, CueEvent, Transcript } from '../types.ts';
 import { PlanValidationError } from '../errors.ts';
-import { detectCandidates } from './detect.ts';
-import { normalizeTranscript } from './normalize.ts';
 import { buildSpans } from './spans.ts';
 
 export interface BuildAnchorsOptions {
@@ -20,7 +11,6 @@ export interface BuildAnchorsOptions {
 
 export interface AnchorsResult {
   readonly document: AnchorDocument;
-  readonly candidateCount: number;
 }
 
 /**
@@ -56,39 +46,10 @@ function toAnchors(transcript: Transcript, byId: ReadonlyMap<string, CueEvent>):
 }
 
 /**
- * 交叉檢查：前綴比對抓到、但標記階段沒有認定為事件的位置。
- *
- * 兩種訊號各有各的盲點 —— 標記靠語意（會把宣告讀成講解），比對靠字面
- * （會被同音字騙）。不一致時提出來讓使用者看，而不是任一方單獨決定。
- * 偵測層的錯是無聲的，唯一的解法是讓它現形（ADR-0001）。
- */
-function findDisagreements(
-  transcript: Transcript,
-  category: Category,
-): { readonly disagreements: Disagreement[]; readonly candidateCount: number } {
-  const candidates = detectCandidates(normalizeTranscript(transcript), category.locator);
-
-  // 用標記自己帶的段落索引取涵蓋範圍，不要拿錨點時間去反查段落 ——
-  // 錨點時間是段內內插出來的，落在段落之間的空隙時反查會失敗，
-  // 結果把已經標記好的位置也報成漏標。
-  const covered = (transcript.events ?? [])
-    .map((marked) => transcript.segments[marked.segmentIndex])
-    .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
-
-  const disagreements = candidates
-    .filter((candidate) =>
-      covered.every((segment) => candidate.at < segment.start || candidate.at > segment.end),
-    )
-    .map((candidate) => ({ at: candidate.at, excerpt: candidate.excerpt }));
-
-  return { disagreements, candidateCount: candidates.length };
-}
-
-/**
  * 逐字稿 → 錨點文件。
  *
  * 事件由來源準備階段標記（見 transcribe/correct.ts），這裡只負責配對成區段
- * 並算出取材窗口；字串比對退居交叉檢查。
+ * 並算出取材窗口 —— 純函式，不做任何 I/O、不發任何請求。
  */
 export function buildAnchors(options: BuildAnchorsOptions): AnchorsResult {
   // undefined 代表標記階段根本沒跑過（例如拿到未經準備的逐字稿），
@@ -100,7 +61,7 @@ export function buildAnchors(options: BuildAnchorsOptions): AnchorsResult {
     );
   }
 
-  const byId = new Map(options.category.locator.events.map((event) => [event.id, event]));
+  const byId = new Map(options.category.vocabulary.events.map((event) => [event.id, event]));
   const anchors = toAnchors(options.transcript, byId);
 
   const { spans, unpaired } = buildSpans(
@@ -108,12 +69,7 @@ export function buildAnchors(options: BuildAnchorsOptions): AnchorsResult {
     options.category,
     options.transcript.source.durationSeconds,
   );
-  const { disagreements, candidateCount } = findDisagreements(options.transcript, options.category);
-
-  return {
-    document: { source: options.transcript.source, anchors, spans, unpaired, disagreements },
-    candidateCount,
-  };
+  return { document: { source: options.transcript.source, anchors, spans, unpaired } };
 }
 
 export async function writeAnchorDocument(document: AnchorDocument, path: string): Promise<void> {

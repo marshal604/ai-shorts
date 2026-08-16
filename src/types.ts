@@ -9,33 +9,29 @@
 
 export interface Category {
   readonly name: string;
-  readonly locator: Locator;
+  readonly vocabulary: EventVocabulary;
   readonly skeleton: readonly Position[];
-  readonly framing: FramingStrategy;
-  /** 語音辨識誤轉的專有名詞校正表，例如 FBG → FVG。只用於文字呈現，不參與定位。 */
+  /**
+   * 語音辨識誤轉的專有名詞提示，例如 FBG → FVG。
+   * 是給校正階段的提示而非窮舉表 —— 實測校正會抓到不在表裡的錯誤。
+   */
   readonly glossary: Readonly<Record<string, string>>;
+  /**
+   * 長度目標。是**軟性**的：內容講完、節奏順就好，不強制截斷 ——
+   * 硬性上限會為了湊秒數而砍掉還沒講完的話。
+   */
   readonly duration: DurationTarget;
   readonly music: MusicConfig;
 }
 
 /**
- * 定位策略。可辨識聯集 —— v1 只有口令一個成員，
- * 日後新增 `deictic` 或 `llm-scan` 是純增量（ADR-0004）。
+ * 事件詞彙表：這個題材有哪些值得標記的事件。
+ *
+ * 曾經還帶著前綴字串與比對參數，用來在逐字稿上做決定性的偵測。
+ * 來源準備階段改為依語意標記之後那些都不再需要 —— 講者不必說出固定字眼，
+ * 事件由描述判斷（ADR-0001）。
  */
-export type Locator = CueLocator;
-
-export interface CueLocator {
-  readonly kind: 'cue';
-  /**
-   * 決定性偵測器，以變體集合而非單一字串表示。
-   *
-   * 前綴本身也會被語音辨識聽錯（實測「這筆進場」被轉成「這比進場」，同音 zhè bǐ）。
-   * 偵測層的錯是無聲的 —— 漏掉就永遠不會被發現 —— 所以這裡寧可多抓，
-   * 誤報交給分類器濾掉（ADR-0001）。
-   */
-  readonly prefixes: readonly string[];
-  /** 前綴後取多少字交給分類器判讀。 */
-  readonly proximity: number;
+export interface EventVocabulary {
   readonly events: readonly CueEvent[];
 }
 
@@ -93,7 +89,6 @@ export interface PositionSource {
 }
 
 export type FramingMode = 'full' | 'roi';
-export type FramingStrategy = 'fixed' | 'content-aware';
 
 export interface DurationTarget {
   readonly target: number;
@@ -196,18 +191,6 @@ export interface AnchorDocument {
   readonly spans: readonly Span[];
   /** 無法配對的錨點，保留下來讓使用者看得見自己漏喊了什麼。 */
   readonly unpaired: readonly Anchor[];
-  /**
-   * 前綴比對抓到、但標記階段沒有認定為事件的位置。
-   *
-   * 兩種訊號不一致時提出來讓使用者看，而不是任一方單獨決定 ——
-   * 偵測層的錯是無聲的，唯一的解法是讓它現形。
-   */
-  readonly disagreements: readonly Disagreement[];
-}
-
-export interface Disagreement {
-  readonly at: number;
-  readonly excerpt: string;
 }
 
 export interface Anchor {

@@ -4,18 +4,13 @@ import type { Category } from '../types.ts';
 /**
  * 交易分析類別。
  *
- * 事件不列語音辨識變體 —— 偵測靠「這筆」前綴（決定性），
- * 分類與過濾交給 LLM 讀 description 判斷（ADR-0001）。實測變體包括
- * 止盈→只贏／止音、止損→止存／简体「损」，人工白名單維護不完。
+ * 事件以自然語言描述，由來源準備階段依語意標記 —— 講者不必說出固定字眼，
+ * 「這筆進場」「這邊就進場」「我現在進了」都算數（ADR-0001）。
  */
 export const trading: Category = {
   name: '交易分析',
 
-  locator: {
-    kind: 'cue',
-    // 同音變體：實測「這筆進場」曾被轉成「這比進場」。
-    prefixes: ['這筆', '這比', '這畢', '這必'],
-    proximity: 24,
+  vocabulary: {
     events: [
       {
         id: 'entry',
@@ -95,8 +90,6 @@ export const trading: Category = {
       collapsible: false,
     },
   ],
-
-  framing: 'fixed',
 
   glossary: {
     FBG: 'FVG',

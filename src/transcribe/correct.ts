@@ -37,7 +37,7 @@ function buildPrompt(segments: readonly TranscriptSegment[], category: Category)
     .map(([wrong, right]) => `「${wrong}」應為「${right}」`)
     .join('；');
 
-  const events = category.locator.events
+  const events = category.vocabulary.events
     .map((event) => `- ${event.id}：${event.description}`)
     .join('\n');
 
@@ -143,7 +143,7 @@ export interface CorrectionResult {
 export async function prepareTranscript(options: CorrectOptions): Promise<CorrectionResult> {
   const size = options.batchSize ?? 120;
   const original = options.transcript.segments;
-  const validEventIds = new Set(options.category.locator.events.map((event) => event.id));
+  const validEventIds = new Set(options.category.vocabulary.events.map((event) => event.id));
 
   const segments: TranscriptSegment[] = [];
   const events: MarkedEvent[] = [];

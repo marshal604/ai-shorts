@@ -3,12 +3,11 @@ import { trading } from '../src/categories/trading.ts';
 import type { AnchorRole } from '../src/types.ts';
 
 const eventsWithRole = (role: AnchorRole) =>
-  trading.locator.events.filter((event) => event.role === role);
+  trading.vocabulary.events.filter((event) => event.role === role);
 
 describe('交易類別', () => {
-  it('前綴是變體集合 —— 前綴本身也會被聽錯', () => {
-    expect(trading.locator.prefixes.length).toBeGreaterThan(0);
-    expect(trading.locator.prefixes).toContain('這筆');
+  it('事件詞彙表不為空 —— 沒有事件就沒有東西可標記', () => {
+    expect(trading.vocabulary.events.length).toBeGreaterThan(0);
   });
 
   it('恰有一種開啟事件', () => {
@@ -30,13 +29,13 @@ describe('交易類別', () => {
   });
 
   it('每個事件都有給分類器讀的描述，而不是靠字串比對', () => {
-    for (const event of trading.locator.events) {
+    for (const event of trading.vocabulary.events) {
       expect(event.description.length).toBeGreaterThan(4);
     }
   });
 
   it('事件 id 不重複', () => {
-    const ids = trading.locator.events.map((event) => event.id);
+    const ids = trading.vocabulary.events.map((event) => event.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 

@@ -1,8 +1,8 @@
 import { runBinary } from '../exec.ts';
 import { ExternalToolError } from '../errors.ts';
 import type { Cut, FramingMode } from '../types.ts';
-import { detectContentLayout } from './crop.ts';
-import type { ContentLayout } from './crop.ts';
+import { detectChrome, detectContentLayout } from './crop.ts';
+import type { ChromeInsets, ContentLayout } from './crop.ts';
 import { BANDS, CANVAS } from './layout.ts';
 
 /**
@@ -18,17 +18,8 @@ const SAMPLE_WIDTH = 640;
 /** 裁切右界留的餘裕，否則最下方的價格標籤會貼邊被切。 */
 const AXIS_MARGIN_RATIO = 0.004;
 
-/**
- * 左側工具列佔畫面的比例，偵測前先排除。
- *
- * 這個值無法從投影推得：工具列有圖示，在投影上就是「內容」，而且它與
- * 圖表最左緣的 K 線之間沒有空隙，結構上是連續的一段（實測全解析度下
- * 第一個內容區段是 x 6–1213，工具列與 K 線混在一起）。
- *
- * 它是應用程式版面的固定屬性，屬於題材知識，理應放進 Category 的
- * 構圖設定而不是寫在引擎裡。等到第二個類別出現、介面配置真的不同時再搬。
- */
-const LEFT_CHROME_RATIO = 0.035;
+/** 偵測介面元件時抽幾張畫面。時間要拉開，才分得出「不會動」與「剛好沒動」。 */
+const CHROME_SAMPLES = 3;
 
 export interface CropBox {
   readonly x: number;
@@ -61,6 +52,7 @@ const BODY_START_RATIO: Readonly<Record<FramingMode, number>> = { full: 0, roi: 
 /** 把偵測到的內容分佈換算成實際像素的裁切框。 */
 export function planFraming(
   layout: ContentLayout,
+  chrome: ChromeInsets,
   mode: FramingMode,
   sourceWidth: number,
   sourceHeight: number,
@@ -70,9 +62,10 @@ export function planFraming(
   const scaleX = sourceWidth / sampleWidth;
   const scaleY = sourceHeight / sampleHeight;
 
-  const chromeEdge = sampleWidth * LEFT_CHROME_RATIO;
-  const contentLeft = Math.max(layout.body.from, chromeEdge);
+  // 介面元件是量出來的，不是假設的 —— 見 detectChrome。
+  const contentLeft = Math.max(layout.body.from, sampleWidth * chrome.left);
   const bodyLeft = contentLeft + (layout.body.to - contentLeft) * BODY_START_RATIO[mode];
+  // 垂直方向交給單幀投影 —— 見 detectChrome 的說明。
   const top = layout.vertical.from * scaleY;
   const bottom = layout.vertical.to * scaleY;
 
@@ -171,15 +164,50 @@ export async function sampleFrame(
   return { gray, width, height };
 }
 
+/**
+ * 前置判斷：量出這支影片四邊的介面元件。
+ *
+ * 一支影片只做一次 —— 介面是整支片的屬性，不會逐片段改變。
+ * 抽樣點平均散佈在全片，時間拉得越開，「不會動」的判斷越可靠。
+ */
+export async function detectVideoChrome(
+  video: string,
+  durationSeconds: number,
+  sourceWidth: number,
+  sourceHeight: number,
+): Promise<ChromeInsets> {
+  const samples = [];
+  for (let index = 0; index < CHROME_SAMPLES; index += 1) {
+    const at = (durationSeconds * (index + 1)) / (CHROME_SAMPLES + 1);
+    samples.push(await sampleFrame(video, at, sourceWidth, sourceHeight));
+  }
+  const first = samples[0];
+  if (first === undefined) return { left: 0, right: 0 };
+  return detectChrome(
+    samples.map((sample) => sample.gray),
+    first.width,
+    first.height,
+  );
+}
+
 /** 算出一個片段的裁切計畫。取片段中點的畫面，段內固定不變。 */
 export async function planCutFraming(
   video: string,
   cut: Cut,
   sourceWidth: number,
   sourceHeight: number,
+  chrome: ChromeInsets,
 ): Promise<FramingPlan> {
   const midpoint = cut.start + (cut.end - cut.start) / 2;
   const sample = await sampleFrame(video, midpoint, sourceWidth, sourceHeight);
   const layout = detectContentLayout(sample.gray, sample.width, sample.height);
-  return planFraming(layout, cut.framing, sourceWidth, sourceHeight, sample.width, sample.height);
+  return planFraming(
+    layout,
+    chrome,
+    cut.framing,
+    sourceWidth,
+    sourceHeight,
+    sample.width,
+    sample.height,
+  );
 }
