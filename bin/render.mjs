@@ -14,4 +14,11 @@ const child = spawn(
   [resolve(root, 'src/cli/render.ts'), ...process.argv.slice(2)],
   { stdio: 'inherit' },
 );
+
+// 沒有這個監聽器，找不到 tsx 時 Node 會把 spawn 的 error 事件當成未處理例外拋出，
+// 使用者看到的是一串 ENOENT 堆疊而不是「請先安裝相依套件」。
+child.on('error', (cause) => {
+  process.stderr.write(`無法執行 tsx：${cause.message}\n請先在專案目錄執行 npm install。\n`);
+  process.exit(1);
+});
 child.on('exit', (code) => process.exit(code ?? 1));

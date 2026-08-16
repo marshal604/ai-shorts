@@ -12,9 +12,10 @@ export interface Category {
   readonly locator: Locator;
   readonly skeleton: readonly Position[];
   readonly framing: FramingStrategy;
-  /** 語音辨識誤轉的專有名詞校正表，例如 FBG → FVG。 */
+  /** 語音辨識誤轉的專有名詞校正表，例如 FBG → FVG。只用於文字呈現，不參與定位。 */
   readonly glossary: Readonly<Record<string, string>>;
   readonly duration: DurationTarget;
+  readonly music: MusicConfig;
 }
 
 /**
@@ -49,14 +50,25 @@ export interface CueEvent {
 
 export type AnchorRole = 'open' | 'close';
 
+/**
+ * 背景音樂。短影片不帶講者原聲，敘事由文案卡承載，音樂只是底噪。
+ * 未指定 `path` 時使用程式生成的底樂 —— 沒有版權持有人、不需要歸屬，
+ * 也不會觸發平台的內容比對（「無版權音樂」不等於「不會被認領」）。
+ */
+export interface MusicConfig {
+  readonly path?: string;
+  readonly gainDb: number;
+  readonly fadeInSeconds: number;
+  readonly fadeOutSeconds: number;
+}
+
 // ── 骨架 ───────────────────────────────────────────────────────────
 
 export interface Position {
   readonly id: string;
   readonly source: PositionSource;
   readonly framing: FramingMode;
-  readonly audio: AudioMode;
-  /** 播放倍速，省略即原速。持倉段以此快轉。 */
+  /** 播放倍速，省略即原速。原聲已不使用，因此任何位置都可以變速。 */
   readonly speed?: number;
   /** 素材不存在時可消失而非報錯（ADR-0004）。 */
   readonly collapsible: boolean;
@@ -73,7 +85,6 @@ export interface PositionSource {
 }
 
 export type FramingMode = 'full' | 'roi';
-export type AudioMode = 'original' | 'mute';
 export type FramingStrategy = 'fixed' | 'content-aware';
 
 export interface DurationTarget {
@@ -88,6 +99,7 @@ export interface Plan {
   readonly source: PlanSource;
   readonly span: PlanSpan;
   readonly cuts: readonly Cut[];
+  readonly cards: readonly Card[];
   readonly metadata: PlanMetadata;
 }
 
@@ -110,8 +122,21 @@ export interface Cut {
   readonly start: number;
   readonly end: number;
   readonly framing: FramingMode;
-  readonly audio: AudioMode;
   readonly speed?: number;
+}
+
+export type CardKind = 'title' | 'caption';
+
+/**
+ * 畫面上的一張文字卡。沒有人聲，所以敘事全靠這些卡。
+ * `start` 與 `end` 是**成品時間軸**上的秒數，不是長影片的時間 ——
+ * 文案卡與片段是兩套獨立的時間軸，一張卡可以跨越片段邊界。
+ */
+export interface Card {
+  readonly kind: CardKind;
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface PlanMetadata {

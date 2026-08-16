@@ -33,8 +33,26 @@ describe('命令列參數', () => {
     expect(parseArgs(['plan.json', '--out'])).toBeNull();
   });
 
-  it('忽略不認得的旗標，但不忽略位置參數', () => {
-    const args = parseArgs(['--verbose', 'plan.json']);
-    expect(args?.planPath).toBe(resolve('plan.json'));
+  it('不認得的旗標視為用法錯誤 —— 靜靜吞掉打錯的旗標，使用者要等編碼跑完才發現', () => {
+    expect(parseArgs(['--verbose', 'plan.json'])).toBeNull();
+    expect(parseArgs(['plan.json', '--ou', '/tmp/x'])).toBeNull();
+  });
+
+  it('支援 --out=值 的寫法', () => {
+    const args = parseArgs(['plan.json', '--out=/tmp/shorts']);
+    expect(args?.outDir).toBe(resolve('/tmp/shorts'));
+  });
+
+  it('支援 --music=值 的寫法', () => {
+    const args = parseArgs(['plan.json', '--music=/tmp/bed.mp3']);
+    expect(args?.musicPath).toBe(resolve('/tmp/bed.mp3'));
+  });
+
+  it('--out= 後面空的視為用法錯誤', () => {
+    expect(parseArgs(['plan.json', '--out='])).toBeNull();
+  });
+
+  it('未指定 --music 時不帶音樂路徑', () => {
+    expect(parseArgs(['plan.json'])?.musicPath).toBeUndefined();
   });
 });

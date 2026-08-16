@@ -54,14 +54,6 @@ describe('交易類別', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('快轉的位置一律靜音 —— 變速會讓聲音變調', () => {
-    for (const position of trading.skeleton) {
-      if (position.speed !== undefined && position.speed !== 1) {
-        expect(position.audio).toBe('mute');
-      }
-    }
-  });
-
   it('骨架的原始素材總長落在目標長度的合理倍數內', () => {
     const raw = trading.skeleton.reduce((total, position) => {
       const span = position.source.to - position.source.from;
@@ -74,6 +66,19 @@ describe('交易類別', () => {
   it('長度目標的上下界包住目標值', () => {
     expect(trading.duration.min).toBeLessThanOrEqual(trading.duration.target);
     expect(trading.duration.target).toBeLessThanOrEqual(trading.duration.max);
+  });
+
+  it('未指定音樂檔時用程式生成的底樂 —— 零授權風險', () => {
+    expect(trading.music.path).toBeUndefined();
+  });
+
+  it('音樂音量壓在底噪，不搶畫面', () => {
+    expect(trading.music.gainDb).toBeLessThan(-10);
+  });
+
+  it('音樂有淡入與淡出', () => {
+    expect(trading.music.fadeInSeconds).toBeGreaterThan(0);
+    expect(trading.music.fadeOutSeconds).toBeGreaterThan(0);
   });
 
   it('術語表涵蓋實測過的語音辨識誤轉', () => {

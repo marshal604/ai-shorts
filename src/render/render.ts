@@ -1,14 +1,17 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '../exec.ts';
 import { PlanValidationError } from '../errors.ts';
-import type { Cut, Plan } from '../types.ts';
+import type { Card, Cut, MusicConfig, Plan } from '../types.ts';
 import { buildFfmpegArgs, cutDuration, planDuration } from './filtergraph.ts';
+import { maxTextLength, renderCardPng } from './text.ts';
 
 export interface RenderResult {
   readonly videoPath: string;
   readonly metadataPath: string;
   readonly durationSeconds: number;
+  readonly cardCount: number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -41,10 +44,15 @@ function validateSpan(span: unknown, problems: string[]): void {
     problems.push('缺少 span 物件');
     return;
   }
-  for (const key of ['index', 'openAt', 'closeAt'] as const) {
+  for (const key of ['openAt', 'closeAt'] as const) {
     if (!isFiniteNumber(span[key])) {
       problems.push(`span.${key} 必須是數字`);
     }
+  }
+  // index 會直接進檔名，負數或小數會產出難以辨識的檔案。
+  const index = span['index'];
+  if (!isFiniteNumber(index) || !Number.isInteger(index) || index < 0) {
+    problems.push('span.index 必須是非負整數');
   }
   if (!isNonEmptyString(span['outcome'])) {
     problems.push('span.outcome 必須是非空字串');
@@ -57,6 +65,9 @@ function validateCut(cut: unknown, index: number, problems: string[]): void {
     return;
   }
   const label = `cuts[${index}] (${isNonEmptyString(cut['positionId']) ? cut['positionId'] : '未命名'})`;
+  if (!isNonEmptyString(cut['positionId'])) {
+    problems.push(`${label}：positionId 必須是非空字串`);
+  }
   const start = cut['start'];
   const end = cut['end'];
 
@@ -71,20 +82,50 @@ function validateCut(cut: unknown, index: number, problems: string[]): void {
   if (cut['framing'] !== 'full' && cut['framing'] !== 'roi') {
     problems.push(`${label}：framing 必須是 full 或 roi`);
   }
-  if (cut['audio'] !== 'original' && cut['audio'] !== 'mute') {
-    problems.push(`${label}：audio 必須是 original 或 mute`);
-  }
 
   const speed = cut['speed'];
-  if (speed === undefined) return;
-  if (!isFiniteNumber(speed) || speed <= 0) {
+  if (speed !== undefined && (!isFiniteNumber(speed) || speed <= 0)) {
     problems.push(`${label}：speed 必須為正數`);
+  }
+}
+
+function validateCard(card: unknown, index: number, total: number, problems: string[]): void {
+  if (!isRecord(card)) {
+    problems.push(`cards[${index}]：必須是物件`);
     return;
   }
-  // 影像被壓縮、聲音沒有，concat 會把片段拉長到音軌長度，
-  // 畫面定格而 metadata 記錄的長度也會是錯的。
-  if (speed !== 1 && cut['audio'] === 'original') {
-    problems.push(`${label}：變速片段必須靜音 —— 原聲不會跟著變速，成品會被拉長到音軌長度`);
+  const label = `cards[${index}]`;
+  if (card['kind'] !== 'title' && card['kind'] !== 'caption') {
+    problems.push(`${label}：kind 必須是 title 或 caption`);
+  }
+  const kind = card['kind'];
+  if (!isNonEmptyString(card['text'])) {
+    problems.push(`${label}：text 必須是非空字串`);
+  } else if (kind === 'title' || kind === 'caption') {
+    const limit = maxTextLength(kind);
+    if (card['text'].length > limit) {
+      problems.push(
+        `${label}：text 有 ${card['text'].length} 字，超過 ${kind} 的 ${limit} 字上限；` +
+          '超出的部分會被靜靜截掉，而卡就是敘事本身',
+      );
+    }
+  }
+
+  const start = card['start'];
+  const end = card['end'];
+  if (!isFiniteNumber(start) || start < 0) {
+    problems.push(`${label}：start 必須是非負數字`);
+  }
+  if (!isFiniteNumber(end)) {
+    problems.push(`${label}：end 必須是數字`);
+    return;
+  }
+  if (isFiniteNumber(start) && end <= start) {
+    problems.push(`${label}：end 必須大於 start`);
+  }
+  // 卡的時間是成品時間軸，落在片尾之後就永遠不會顯示。
+  if (isFiniteNumber(start) && start >= total) {
+    problems.push(`${label}：start 超出成品長度 ${total.toFixed(2)} 秒，這張卡不會出現`);
   }
 }
 
@@ -97,6 +138,37 @@ function validateMetadata(metadata: unknown, problems: string[]): void {
   if (typeof metadata['description'] !== 'string') problems.push('metadata.description 必須是字串');
   if (!Array.isArray(metadata['hashtags']) || metadata['hashtags'].some((t) => typeof t !== 'string')) {
     problems.push('metadata.hashtags 必須是字串陣列');
+  }
+}
+
+/**
+ * 同一種卡疊在畫面的同一個帶狀區。兩張時間重疊的話會同時畫上去，
+ * 字直接糊成一團 —— 而且要等成品播出來才看得出來。
+ */
+function validateCardOverlaps(cards: readonly unknown[], problems: string[]): void {
+  const typed = cards
+    .map((card, index) => ({ card, index }))
+    .filter((entry): entry is { card: Record<string, unknown>; index: number } => isRecord(entry.card))
+    .filter(({ card }) => isFiniteNumber(card['start']) && isFiniteNumber(card['end']));
+
+  for (let a = 0; a < typed.length; a += 1) {
+    for (let b = a + 1; b < typed.length; b += 1) {
+      const first = typed[a];
+      const second = typed[b];
+      if (first === undefined || second === undefined) continue;
+      if (first.card['kind'] !== second.card['kind']) continue;
+
+      const startA = first.card['start'] as number;
+      const endA = first.card['end'] as number;
+      const startB = second.card['start'] as number;
+      const endB = second.card['end'] as number;
+      if (startA < endB && startB < endA) {
+        problems.push(
+          `cards[${first.index}] 與 cards[${second.index}] 都是 ${String(first.card['kind'])} 且時間重疊，` +
+            '會疊在同一塊區域上',
+        );
+      }
+    }
   }
 }
 
@@ -122,21 +194,41 @@ export function validatePlan(plan: unknown): asserts plan is Plan {
     cuts.forEach((cut, index) => validateCut(cut, index, problems));
   }
 
+  // 卡片陣列可以是空的（沒有文字仍然渲染得出影片），但不可以缺席 ——
+  // 下游一律直接取用 plan.cards，缺席會炸成這個驗證器存在的意義所在的那種 TypeError。
+  const cards = plan['cards'];
+  if (!Array.isArray(cards)) {
+    problems.push('cards 必須是陣列（可以是空陣列，但不可以缺席）');
+  } else if (Array.isArray(cuts)) {
+    const total = cuts
+      .filter((cut): cut is Cut => isRecord(cut) && isFiniteNumber(cut['start']) && isFiniteNumber(cut['end']))
+      .reduce((sum, cut) => sum + cutDuration(cut), 0);
+    cards.forEach((card, index) => validateCard(card, index, total, problems));
+    validateCardOverlaps(cards, problems);
+  }
+
   if (problems.length > 0) {
     throw new PlanValidationError(`計畫不合法：\n- ${problems.join('\n- ')}`);
   }
 }
 
-function timecode(seconds: number): string {
+/** 分秒拆開回傳，不透過字串來回切 —— 超過 99 分鐘時字串切法會錯位。 */
+function splitTime(seconds: number): { readonly mm: string; readonly ss: string } {
   const total = Math.max(0, Math.floor(seconds));
-  const mm = String(Math.floor(total / 60)).padStart(2, '0');
-  const ss = String(total % 60).padStart(2, '0');
+  return {
+    mm: String(Math.floor(total / 60)).padStart(2, '0'),
+    ss: String(total % 60).padStart(2, '0'),
+  };
+}
+
+function timecode(seconds: number): string {
+  const { mm, ss } = splitTime(seconds);
   return `${mm}${ss}`;
 }
 
-function readableTimecode(seconds: number): string {
-  const stamp = timecode(seconds);
-  return `${stamp.slice(0, 2)}:${stamp.slice(2)}`;
+export function readableTimecode(seconds: number): string {
+  const { mm, ss } = splitTime(seconds);
+  return `${mm}:${ss}`;
 }
 
 /**
@@ -157,7 +249,10 @@ export function outputBasename(plan: Plan): string {
 function metadataMarkdown(plan: Plan, durationSeconds: number): string {
   const cutRow = (cut: Cut): string =>
     `| ${cut.positionId} | ${readableTimecode(cut.start)}–${readableTimecode(cut.end)} | ` +
-    `${cut.framing} | ${cut.audio} | ${cut.speed ?? 1}x | ${cutDuration(cut).toFixed(2)}s |`;
+    `${cut.framing} | ${cut.speed ?? 1}x | ${cutDuration(cut).toFixed(2)}s |`;
+
+  const cardRow = (card: Card): string =>
+    `| ${card.kind} | ${card.start.toFixed(1)}–${card.end.toFixed(1)}s | ${card.text} |`;
 
   return [
     `# ${plan.metadata.title}`,
@@ -175,15 +270,35 @@ function metadataMarkdown(plan: Plan, durationSeconds: number): string {
     '',
     '## 片段',
     '',
-    '| 位置 | 長影片時間 | 構圖 | 音訊 | 倍速 | 成品長度 |',
-    '|---|---|---|---|---|---|',
+    '| 位置 | 長影片時間 | 構圖 | 倍速 | 成品長度 |',
+    '|---|---|---|---|---|',
     ...plan.cuts.map(cutRow),
+    '',
+    '## 文案卡',
+    '',
+    '| 類型 | 成品時間 | 文字 |',
+    '|---|---|---|',
+    ...plan.cards.map(cardRow),
     '',
   ].join('\n');
 }
 
+async function writeCardImages(cards: readonly Card[], directory: string): Promise<string[]> {
+  const paths: string[] = [];
+  for (const [index, card] of cards.entries()) {
+    const path = join(directory, `card-${String(index).padStart(2, '0')}.png`);
+    await writeFile(path, renderCardPng(card));
+    paths.push(path);
+  }
+  return paths;
+}
+
 /** 依計畫渲染出一支短影片與對應的 metadata 檔。 */
-export async function renderPlan(plan: Plan, outputDir: string): Promise<RenderResult> {
+export async function renderPlan(
+  plan: Plan,
+  outputDir: string,
+  music: MusicConfig,
+): Promise<RenderResult> {
   validatePlan(plan);
   await mkdir(outputDir, { recursive: true });
 
@@ -192,8 +307,15 @@ export async function renderPlan(plan: Plan, outputDir: string): Promise<RenderR
   const metadataPath = join(outputDir, `${basename}.md`);
   const durationSeconds = planDuration(plan);
 
-  await run('ffmpeg', buildFfmpegArgs(plan, videoPath));
+  const workDir = await mkdtemp(join(tmpdir(), 'ai-shorts-cards-'));
+  try {
+    const cardImagePaths = await writeCardImages(plan.cards, workDir);
+    await run('ffmpeg', buildFfmpegArgs(plan, { outputPath: videoPath, cardImagePaths, music }));
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+
   await writeFile(metadataPath, metadataMarkdown(plan, durationSeconds), 'utf8');
 
-  return { videoPath, metadataPath, durationSeconds };
+  return { videoPath, metadataPath, durationSeconds, cardCount: plan.cards.length };
 }

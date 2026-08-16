@@ -42,41 +42,41 @@ export const trading: Category = {
   },
 
   // 骨架：結果先破梗當鉤子，其餘依時序推進。
-  // 位置 1 靜音是為了不跟位置 6 播同一句話。
+  //
+  // 每個位置的倍速由「這段畫面本身要多久才看得懂」決定，不再受說話速度綁架 ——
+  // 短影片不帶原聲，敘事由文案卡承載。講解段壓得最兇，揭曉段維持原速當落點。
   skeleton: [
     {
       id: 'hook',
       source: { anchor: 'close', from: -2, to: 1 },
       framing: 'roi',
-      audio: 'mute',
       collapsible: false,
     },
     {
       id: 'context',
       source: { anchor: 'open', from: -83, to: -69 },
       framing: 'full',
-      audio: 'original',
+      speed: 2.5,
       collapsible: true,
     },
     {
       id: 'setup',
       source: { anchor: 'open', from: -55, to: -42 },
       framing: 'roi',
-      audio: 'original',
+      speed: 2,
       collapsible: true,
     },
     {
       id: 'entry',
       source: { anchor: 'open', from: -2, to: 7 },
       framing: 'roi',
-      audio: 'original',
+      speed: 1.5,
       collapsible: false,
     },
     {
       id: 'holding',
       source: { anchor: 'open', from: 7, to: 17 },
       framing: 'full',
-      audio: 'mute',
       speed: 8,
       collapsible: true,
     },
@@ -84,7 +84,6 @@ export const trading: Category = {
       id: 'reveal',
       source: { anchor: 'close', from: -3, to: 7 },
       framing: 'roi',
-      audio: 'original',
       collapsible: false,
     },
   ],
@@ -100,5 +99,9 @@ export const trading: Category = {
     止存: '止損',
   },
 
-  duration: { target: 52, min: 45, max: 60 },
+  // 長度由文案卡的字數決定，不再由說話節奏決定。
+  duration: { target: 35, min: 25, max: 50 },
+
+  // 未指定 path 就用程式生成的環境底樂：沒有版權持有人，也不會被平台認領。
+  music: { gainDb: -14, fadeInSeconds: 1.5, fadeOutSeconds: 2 },
 };
