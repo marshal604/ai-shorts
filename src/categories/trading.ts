@@ -40,52 +40,48 @@ export const trading: Category = {
 
   // 骨架：結果先破梗當鉤子，其餘依時序推進。
   //
-  // 每個位置的倍速由「這段畫面本身要多久才看得懂」決定，不再受說話速度綁架 ——
-  // 短影片不帶原聲，敘事由文案卡承載。講解段壓得最兇，揭曉段維持原速當落點。
+  // 只規定順序、意圖與取材上界。實際取哪一段、放多快，由規劃器依內容決定 ——
+  // 骨架寫死位移會盲目抓走「錨點前 N 秒」不管那裡在講什麼。
   skeleton: [
     {
       id: 'hook',
       cardBrief: '結果與風報比：止盈或止損，以及這筆的 RR 是多少。這是破梗，要最短最直接。',
-      source: { anchor: 'close', from: -2, to: 1 },
+      source: { anchor: 'close', direction: 'around', reach: 6 },
       framing: 'roi',
       collapsible: false,
     },
     {
       id: 'context',
       cardBrief: '斐波那契設置或當下關注的關鍵點位，說明進場前在等什麼。',
-      source: { anchor: 'open', from: -83, to: -69 },
+      source: { anchor: 'open', direction: 'before', reach: 180 },
       framing: 'full',
-      speed: 2.5,
       collapsible: true,
     },
     {
       id: 'setup',
       cardBrief: '關鍵 K 棒與進場原因：是哪一根、為什麼是這裡。',
-      source: { anchor: 'open', from: -55, to: -42 },
+      source: { anchor: 'open', direction: 'before', reach: 120 },
       framing: 'roi',
-      speed: 2,
       collapsible: true,
     },
     {
       id: 'entry',
       cardBrief: '實際進場的方向與停損停利設定，含風報比。',
-      source: { anchor: 'open', from: -2, to: 7 },
+      source: { anchor: 'open', direction: 'around', reach: 20 },
       framing: 'roi',
-      speed: 1.5,
       collapsible: false,
     },
     {
       id: 'holding',
       cardBrief: '持倉過程加速走向停利或停損，可加一句簡短旁白帶節奏。',
-      source: { anchor: 'open', from: 7, to: 17 },
+      source: { anchor: 'open', direction: 'after', reach: 60 },
       framing: 'full',
-      speed: 8,
       collapsible: true,
     },
     {
       id: 'reveal',
       cardBrief: '最終結果：止盈或止損，以及是怎麼收掉的。',
-      source: { anchor: 'close', from: -3, to: 7 },
+      source: { anchor: 'close', direction: 'around', reach: 20 },
       framing: 'roi',
       collapsible: false,
     },

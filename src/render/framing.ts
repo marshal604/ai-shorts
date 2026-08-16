@@ -1,4 +1,4 @@
-import { runBinary } from '../exec.ts';
+import { run, runBinary } from '../exec.ts';
 import { ExternalToolError } from '../errors.ts';
 import type { Cut, FramingMode } from '../types.ts';
 import { detectChrome, detectContentLayout } from './crop.ts';
@@ -134,6 +134,24 @@ export function placeInChartBand(width: number, height: number): Placement {
     offsetX: toEvenOffset((CANVAS.width - scaledWidth) / 2),
     offsetY: toEvenOffset(BANDS.chart.y + (BANDS.chart.height - scaledHeight) / 2),
   };
+}
+
+/** 影片的實際像素尺寸。計畫要帶著它，渲染時才知道怎麼換算裁切框。 */
+export async function probeDimensions(
+  video: string,
+): Promise<{ readonly width: number; readonly height: number }> {
+  const { stdout } = await run('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height',
+    '-of', 'csv=p=0:s=x',
+    video,
+  ]);
+  const [width, height] = stdout.trim().split('x').map(Number);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width === undefined || height === undefined) {
+    throw new ExternalToolError('ffprobe', null, `無法取得影片尺寸：${video}`);
+  }
+  return { width, height };
 }
 
 /** 抽一幀灰階像素出來做偵測。取片段中點，避開轉場與剛切換畫面的瞬間。 */

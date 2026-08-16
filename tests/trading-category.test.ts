@@ -43,9 +43,17 @@ describe('交易類別', () => {
     expect(trading.skeleton.some((position) => !position.collapsible)).toBe(true);
   });
 
-  it('骨架位置的窗口都是正長度', () => {
+  it('每個骨架位置的取材上界都是正數', () => {
     for (const position of trading.skeleton) {
-      expect(position.source.to).toBeGreaterThan(position.source.from);
+      expect(position.source.reach).toBeGreaterThan(0);
+    }
+  });
+
+  it('骨架只規定意圖與上界，不規定切點與倍速', () => {
+    for (const position of trading.skeleton) {
+      expect(position.source).not.toHaveProperty('from');
+      expect(position.source).not.toHaveProperty('to');
+      expect(position).not.toHaveProperty('speed');
     }
   });
 
@@ -54,13 +62,11 @@ describe('交易類別', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('骨架的原始素材總長落在目標長度的合理倍數內', () => {
-    const raw = trading.skeleton.reduce((total, position) => {
-      const span = position.source.to - position.source.from;
-      return total + span / (position.speed ?? 1);
-    }, 0);
-    expect(raw).toBeGreaterThanOrEqual(trading.duration.min);
-    expect(raw).toBeLessThanOrEqual(trading.duration.max);
+  it('鉤子與揭曉掛在結束錨點，其餘掛在開始錨點', () => {
+    const byId = new Map(trading.skeleton.map((position) => [position.id, position]));
+    expect(byId.get('hook')?.source.anchor).toBe('close');
+    expect(byId.get('reveal')?.source.anchor).toBe('close');
+    expect(byId.get('entry')?.source.anchor).toBe('open');
   });
 
   it('長度目標的上下界包住目標值', () => {

@@ -72,20 +72,25 @@ export interface Position {
    * 沒有人聲，卡就是敘事本身 —— 每個位置該講什麼是題材知識，屬於類別。
    */
   readonly cardBrief: string;
-  /** 播放倍速，省略即原速。原聲已不使用，因此任何位置都可以變速。 */
-  readonly speed?: number;
   /** 素材不存在時可消失而非報錯（ADR-0004）。 */
   readonly collapsible: boolean;
 }
 
 /**
- * 相對於區段某一端錨點的時間窗口，單位秒；負值代表錨點之前。
+ * 這個位置**可以**從哪裡取材：相對於區段某一端錨點、往哪個方向、最遠多少秒。
+ *
+ * 是上界而不是切點。實際取哪一段由規劃器依內容決定 —— 固定位移會盲目地
+ * 抓走「錨點前 N 秒」不管那裡在講什麼，實測抓到的是一個沒有發生的做多想法，
+ * 而該筆交易是做空，文案卡就會寫錯方向。
+ *
  * 引用的是角色而非事件 id —— 骨架不需要知道結束錨點是止盈還是止損。
  */
 export interface PositionSource {
   readonly anchor: AnchorRole;
-  readonly from: number;
-  readonly to: number;
+  /** `before` 只往錨點之前找，`after` 只往之後，`around` 兩側都可以。 */
+  readonly direction: 'before' | 'after' | 'around';
+  /** 離錨點最遠多少秒。 */
+  readonly reach: number;
 }
 
 export type FramingMode = 'full' | 'roi';
@@ -119,7 +124,7 @@ export interface PlanSpan {
   readonly outcome: string;
 }
 
-/** 一個骨架位置實際對應到的長影片時間區間。 */
+/** 一個骨架位置實際對應到的長影片時間區間。倍速由文案長度推導，不由骨架規定。 */
 export interface Cut {
   readonly positionId: string;
   readonly start: number;

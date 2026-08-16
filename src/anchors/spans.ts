@@ -89,8 +89,8 @@ function skeletonReach(category: Category): { readonly open: number; readonly cl
   let open = 0;
   let close = 0;
   for (const position of category.skeleton) {
-    const reach = Math.max(Math.abs(position.source.from), Math.abs(position.source.to));
-    if (position.source.anchor === 'open') open = Math.max(open, reach);
+    const { anchor, reach } = position.source;
+    if (anchor === 'open') open = Math.max(open, reach);
     else close = Math.max(close, reach);
   }
   return { open, close };

@@ -10,6 +10,7 @@
   "scripts": {
     "transcribe": "tsx src/cli/transcribe.ts",
     "anchors": "tsx src/cli/anchors.ts",
+    "plan": "tsx src/cli/plan.ts",
     "render": "tsx src/cli/render.ts",
     "test": "vitest run",
     "test:watch": "vitest",
