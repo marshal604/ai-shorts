@@ -1,0 +1,63 @@
+{
+  "source": {
+    "video": "recordings/sample-session.mov",
+    "width": 3258,
+    "height": 1826
+  },
+  "span": {
+    "index": 1,
+    "openAt": 515.4,
+    "closeAt": 535.0,
+    "outcome": "止損"
+  },
+  "cuts": [
+    {
+      "positionId": "hook",
+      "start": 533.4,
+      "end": 536.4,
+      "framing": "roi",
+      "audio": "mute"
+    },
+    {
+      "positionId": "context",
+      "start": 432.4,
+      "end": 446.4,
+      "framing": "full",
+      "audio": "original"
+    },
+    {
+      "positionId": "setup",
+      "start": 460.4,
+      "end": 473.4,
+      "framing": "roi",
+      "audio": "original"
+    },
+    {
+      "positionId": "entry",
+      "start": 513.4,
+      "end": 522.4,
+      "framing": "roi",
+      "audio": "original"
+    },
+    {
+      "positionId": "holding",
+      "start": 522.4,
+      "end": 532.4,
+      "framing": "full",
+      "audio": "mute",
+      "speed": 8
+    },
+    {
+      "positionId": "reveal",
+      "start": 532.0,
+      "end": 542.0,
+      "framing": "roi",
+      "audio": "original"
+    }
+  ],
+  "metadata": {
+    "title": "回踩 FVG 進場做多，直接被打停損",
+    "description": "流動性上下掃完之後等回踩 FVG 進場做多，停損放在下緣。結果沒有守住，一根就打掉。完整的判斷過程與停損位置。",
+    "hashtags": ["日內交易", "黃金期貨", "MGC", "停損", "交易紀錄"]
+  }
+}
