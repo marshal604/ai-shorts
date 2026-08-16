@@ -33,17 +33,12 @@ async function main(): Promise<void> {
   const jobDir = dirname(transcriptPath);
   const transcript = JSON.parse(await readFile(transcriptPath, 'utf8')) as Transcript;
 
-  log('偵測前綴並分類中…');
-  const { document, candidateCount } = await buildAnchors({
-    transcript,
-    category: trading,
-    cacheDir: join(jobDir, '.cache'),
-  });
+  const { document, candidateCount } = buildAnchors({ transcript, category: trading });
 
   const outputPath = join(jobDir, 'anchors.json');
   await writeAnchorDocument(document, outputPath);
 
-  log(`前綴候選 ${candidateCount} 個 → 錨點 ${document.anchors.length} 個`);
+  log(`標記事件 ${document.anchors.length} 個（前綴比對另抓到 ${candidateCount} 個候選作交叉檢查）`);
   for (const anchor of document.anchors) {
     log(`  ${stamp(anchor.at)}  ${anchor.role === 'open' ? '開始' : '結束'} ${anchor.eventId}  「${anchor.excerpt}」`);
   }
@@ -55,6 +50,12 @@ async function main(): Promise<void> {
     log(`⚠ 有 ${document.unpaired.length} 個錨點沒有配到對，可能是漏喊了口令：`);
     for (const anchor of document.unpaired) {
       log(`  ${stamp(anchor.at)}  ${anchor.role === 'open' ? '開始' : '結束'} ${anchor.eventId}`);
+    }
+  }
+  if (document.disagreements.length > 0) {
+    log(`⚠ 有 ${document.disagreements.length} 處前綴比對抓到、但沒被標記成事件，請確認是不是漏標：`);
+    for (const item of document.disagreements) {
+      log(`  ${stamp(item.at)}  「${item.excerpt}」`);
     }
   }
   process.stdout.write(`${outputPath}\n`);

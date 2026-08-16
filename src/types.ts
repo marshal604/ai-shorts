@@ -159,6 +159,20 @@ export interface Transcript {
   readonly source: TranscriptSource;
   readonly language: string;
   readonly segments: readonly TranscriptSegment[];
+  /**
+   * 來源準備階段標記出來的事件。
+   *
+   * 校正階段本來就要讀完整份逐字稿，讓它順便標記事件的邊際成本是零 ——
+   * 這也讓講者不必逐字照喊固定口令（ADR-0001）。
+   */
+  readonly events?: readonly MarkedEvent[];
+}
+
+export interface MarkedEvent {
+  readonly segmentIndex: number;
+  readonly eventId: string;
+  /** 標記所依據的原句，讓使用者能判斷標對了沒。 */
+  readonly quote: string;
 }
 
 export interface TranscriptSource {
@@ -182,6 +196,18 @@ export interface AnchorDocument {
   readonly spans: readonly Span[];
   /** 無法配對的錨點，保留下來讓使用者看得見自己漏喊了什麼。 */
   readonly unpaired: readonly Anchor[];
+  /**
+   * 前綴比對抓到、但標記階段沒有認定為事件的位置。
+   *
+   * 兩種訊號不一致時提出來讓使用者看，而不是任一方單獨決定 ——
+   * 偵測層的錯是無聲的，唯一的解法是讓它現形。
+   */
+  readonly disagreements: readonly Disagreement[];
+}
+
+export interface Disagreement {
+  readonly at: number;
+  readonly excerpt: string;
 }
 
 export interface Anchor {

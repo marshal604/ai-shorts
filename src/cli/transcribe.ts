@@ -2,7 +2,7 @@ import { basename, join } from 'node:path';
 import { resolve } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { transcribe } from '../transcribe/transcribe.ts';
-import { correctTranscript } from '../transcribe/correct.ts';
+import { prepareTranscript } from '../transcribe/correct.ts';
 import { trading } from '../categories/trading.ts';
 
 const USAGE = `用法：npm run transcribe -- <影片檔> [--out <目錄>] [--force]
@@ -45,16 +45,16 @@ async function main(): Promise<void> {
 
   // 先把逐字稿校正成正確的，再讓下游使用 —— 否則偵測、分類、文案
   // 每一層都要各自容錯，而且各錯各的。
-  log('校正同音錯字與專有名詞中…');
+  log('校正錯字並標記事件中…');
   const jobDir = join(outDir, jobName(video));
-  const corrected = await correctTranscript({
+  const prepared = await prepareTranscript({
     transcript,
     category: trading,
     cacheDir: join(jobDir, '.cache'),
   });
   await writeFile(join(jobDir, 'transcript.raw.json'), `${JSON.stringify(transcript, null, 2)}\n`, 'utf8');
-  await writeFile(outputPath, `${JSON.stringify(corrected.transcript, null, 2)}\n`, 'utf8');
-  log(`校正了 ${corrected.changedSegments} 段（原始版保留在 transcript.raw.json）`);
+  await writeFile(outputPath, `${JSON.stringify(prepared.transcript, null, 2)}\n`, 'utf8');
+  log(`校正 ${prepared.changedSegments} 段、標記 ${prepared.markedEvents} 個事件（原始版保留在 transcript.raw.json）`);
 
   process.stdout.write(`${outputPath}\n`);
 }

@@ -1,77 +1,120 @@
 import { ExternalToolError } from '../errors.ts';
 import { ask, extractJson } from '../llm/client.ts';
-import type { Category, Transcript, TranscriptSegment } from '../types.ts';
+import type { Category, MarkedEvent, Transcript, TranscriptSegment } from '../types.ts';
 
 /**
- * 轉錄後的校正：把語音辨識的同音錯字改回領域裡正確的寫法。
+ * 來源準備：一次讀完整份逐字稿，同時做兩件事 ——
+ * 校正同音錯字與專有名詞，以及標記事件發生在哪一段。
  *
- * 這一步存在的理由是「先把逐字稿變正確，再走下一步」——
- * 否則每個下游環節（偵測、分類、文案）都要各自容錯，而且各錯各的。
+ * 為什麼合成一步：這一趟本來就要讀完整份逐字稿，讓它順便標記事件的
+ * 邊際成本是零。原本把偵測交給字串比對的理由是「整份餵進模型太貴」，
+ * 但既然校正已經在付這筆錢，那個理由就不成立了（ADR-0001）。
  *
- * 為什麼不用 whisper 的 initial prompt 做這件事：實測它會連帶改變斷句、
- * 吞掉音訊、把錨點前綴改成同音錯字，得不償失（見 transcribe.ts 的註解）。
+ * 好處是講者不必逐字照喊固定口令 —— 說「現在進場」「我進了」都標得到。
+ * 字串比對保留為交叉檢查：兩者不一致時提出來讓使用者看。
  *
- * 校正**逐段進行且不改變段落數與時間碼** —— 時間碼是後面所有定位的依據，
- * 不容許在這一步漂移。
+ * 校正**逐段進行且不改變段落數與時間碼** —— 時間碼是後面所有定位的依據。
  */
 
 const SYSTEM = [
-  '你在校正交易分析影片的語音辨識逐字稿。逐字稿有大量同音錯字與專有名詞錯誤。',
-  '你的工作只有一件：把明顯錯的字改成正確的寫法。',
+  '你在處理交易分析影片的語音辨識逐字稿，同時做兩件事：校正錯字，以及標記事件。',
   '',
-  '規則：',
+  '校正規則：',
   '1. 只改同音或近音造成的錯字，以及專有名詞。不要潤飾、不要刪語助詞、不要改語序。',
   '2. 段落數必須與輸入完全相同，一段對一段。沒有要改的段落原樣輸出。',
   '3. 不要合併或拆分段落。',
-  '4. 只輸出 JSON，不要任何其他文字。',
+  '',
+  '標記規則：',
+  '4. 找出講者「宣告事件正在發生」的段落，不是講解、不是假設、不是回顧。',
+  '5. 講者的說法不固定，同一個事件可能說成不同的話。依語意判斷，不要只看字面。',
+  '6. 同一個事件被連著講兩次時，只標第一次。',
+  '',
+  '只輸出 JSON，不要任何其他文字。',
 ].join('\n');
 
-function buildPrompt(segments: readonly TranscriptSegment[], category: Category): string {
+function buildPrompt(
+  segments: readonly TranscriptSegment[],
+  category: Category,
+  offset: number,
+): string {
   const corrections = Object.entries(category.glossary)
     .map(([wrong, right]) => `「${wrong}」應為「${right}」`)
     .join('；');
 
-  const lines = segments.map((segment, index) => `${index}\t${segment.text}`).join('\n');
+  const events = category.locator.events
+    .map((event) => `- ${event.id}：${event.description}`)
+    .join('\n');
+
+  const lines = segments.map((segment, index) => `${offset + index}\t${segment.text}`).join('\n');
 
   return [
     `題材：${category.name}。`,
     corrections.length > 0 ? `已知的常見錯誤：${corrections}。` : '',
-    '也請留意同音的口令用字，例如「這筆」有時會被聽成「這比」「這畢」。',
+    '同音的口令用字也要修，例如「這筆」有時會被聽成「這比」「這畢」。',
     '',
-    `以下是 ${segments.length} 段逐字稿，每行是「編號<tab>內容」：`,
+    '要標記的事件種類：',
+    events,
+    '',
+    `以下是逐字稿，每行是「編號<tab>內容」，共 ${segments.length} 段：`,
     lines,
     '',
-    `輸出格式（陣列，長度必須是 ${segments.length}）：`,
-    '[{"i":0,"t":"校正後的內容"},{"i":1,"t":"校正後的內容"}]',
+    '輸出格式：',
+    '{"segments":[{"i":<編號>,"t":"校正後的內容"}],',
+    ' "events":[{"i":<編號>,"id":"<事件 id>","quote":"<依據的原句>"}]}',
+    `segments 的長度必須是 ${segments.length}，events 沒有就給空陣列。`,
   ]
     .filter((part) => part.length > 0)
     .join('\n');
 }
 
-function applyCorrections(
-  segments: readonly TranscriptSegment[],
-  raw: unknown,
-): TranscriptSegment[] {
-  if (!Array.isArray(raw)) {
-    throw new ExternalToolError('anthropic', null, '校正結果不是陣列');
-  }
+interface Parsed {
+  readonly segments: TranscriptSegment[];
+  readonly events: MarkedEvent[];
+}
 
-  const byIndex = new Map<number, string>();
-  for (const entry of raw) {
+function parseBatch(
+  batch: readonly TranscriptSegment[],
+  offset: number,
+  raw: unknown,
+  validEventIds: ReadonlySet<string>,
+): Parsed {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ExternalToolError('anthropic', null, '來源準備結果不是物件');
+  }
+  const record = raw as Record<string, unknown>;
+
+  const textByIndex = new Map<number, string>();
+  for (const entry of Array.isArray(record['segments']) ? record['segments'] : []) {
     if (typeof entry !== 'object' || entry === null) continue;
-    const record = entry as Record<string, unknown>;
-    const index = record['i'];
-    const text = record['t'];
-    if (typeof index === 'number' && typeof text === 'string' && text.trim().length > 0) {
-      byIndex.set(index, text.trim());
+    const item = entry as Record<string, unknown>;
+    if (typeof item['i'] === 'number' && typeof item['t'] === 'string' && item['t'].trim().length > 0) {
+      textByIndex.set(item['i'], item['t'].trim());
     }
   }
 
-  // 時間碼一律沿用原段落 —— 校正只准動文字。
-  return segments.map((segment, index) => ({
-    ...segment,
-    text: byIndex.get(index) ?? segment.text,
-  }));
+  const events: MarkedEvent[] = [];
+  for (const entry of Array.isArray(record['events']) ? record['events'] : []) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const item = entry as Record<string, unknown>;
+    const index = item['i'];
+    const id = item['id'];
+    if (typeof index !== 'number' || typeof id !== 'string' || !validEventIds.has(id)) continue;
+    if (index < offset || index >= offset + batch.length) continue;
+    events.push({
+      segmentIndex: index,
+      eventId: id,
+      quote: typeof item['quote'] === 'string' ? item['quote'] : '',
+    });
+  }
+
+  // 時間碼一律沿用原段落 —— 準備階段只准動文字與標記。
+  return {
+    segments: batch.map((segment, index) => ({
+      ...segment,
+      text: textByIndex.get(offset + index) ?? segment.text,
+    })),
+    events,
+  };
 }
 
 export interface CorrectOptions {
@@ -85,30 +128,37 @@ export interface CorrectOptions {
 export interface CorrectionResult {
   readonly transcript: Transcript;
   readonly changedSegments: number;
+  readonly markedEvents: number;
 }
 
-export async function correctTranscript(options: CorrectOptions): Promise<CorrectionResult> {
+export async function prepareTranscript(options: CorrectOptions): Promise<CorrectionResult> {
   const size = options.batchSize ?? 120;
-  const segments = options.transcript.segments;
-  const corrected: TranscriptSegment[] = [];
+  const original = options.transcript.segments;
+  const validEventIds = new Set(options.category.locator.events.map((event) => event.id));
 
-  for (let offset = 0; offset < segments.length; offset += size) {
-    const batch = segments.slice(offset, offset + size);
+  const segments: TranscriptSegment[] = [];
+  const events: MarkedEvent[] = [];
+
+  for (let offset = 0; offset < original.length; offset += size) {
+    const batch = original.slice(offset, offset + size);
     const { text } = await ask({
       system: SYSTEM,
-      prompt: buildPrompt(batch, options.category),
+      prompt: buildPrompt(batch, options.category, offset),
       maxTokens: 8192,
       cacheDir: options.cacheDir,
     });
-    corrected.push(...applyCorrections(batch, extractJson(text)));
+    const parsed = parseBatch(batch, offset, extractJson(text), validEventIds);
+    segments.push(...parsed.segments);
+    events.push(...parsed.events);
   }
 
-  const changedSegments = corrected.filter(
-    (segment, index) => segment.text !== segments[index]?.text,
+  const changedSegments = segments.filter(
+    (segment, index) => segment.text !== original[index]?.text,
   ).length;
 
   return {
-    transcript: { ...options.transcript, segments: corrected },
+    transcript: { ...options.transcript, segments, events },
     changedSegments,
+    markedEvents: events.length,
   };
 }
