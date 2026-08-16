@@ -66,7 +66,6 @@ export interface MusicConfig {
 export interface Position {
   readonly id: string;
   readonly source: PositionSource;
-  readonly framing: FramingMode;
   /**
    * 這個位置的文案卡要傳達什麼，用自然語言寫給規劃器讀。
    * 沒有人聲，卡就是敘事本身 —— 每個位置該講什麼是題材知識，屬於類別。
@@ -92,8 +91,6 @@ export interface PositionSource {
   /** 離錨點最遠多少秒。 */
   readonly reach: number;
 }
-
-export type FramingMode = 'full' | 'roi';
 
 export interface DurationTarget {
   readonly target: number;
@@ -129,7 +126,6 @@ export interface Cut {
   readonly positionId: string;
   readonly start: number;
   readonly end: number;
-  readonly framing: FramingMode;
   readonly speed?: number;
 }
 

@@ -1,6 +1,6 @@
 import { run, runBinary } from '../exec.ts';
 import { ExternalToolError } from '../errors.ts';
-import type { Cut, FramingMode } from '../types.ts';
+import type { Cut } from '../types.ts';
 import { detectChrome, detectContentLayout } from './crop.ts';
 import type { ChromeInsets, ContentLayout } from './crop.ts';
 import { BANDS, CANVAS } from './layout.ts';
@@ -43,17 +43,17 @@ function toEvenOffset(value: number): number {
   return Math.max(0, Math.round(value / 2) * 2);
 }
 
-/**
- * 全幅模式保留左側歷史脈絡，放大模式只取主體的右半 ——
- * 講進場點位時要看的是進場價與停利停損框的細節。
+/*
+ * 曾經有「放大」模式，只取主體右半以看清進場價與停損框。實測四次全部失敗：
+ * 圖表右側有一大片留白，K 棒大約在畫面 80% 處就結束，所以「右側 55%」
+ * 幾乎都落在空白區，K 棒被留在左邊裁掉。全幅在同一支片裡兩次都完整可讀，
+ * 因此整個概念移除 —— 少一個模式，少一整類失敗。
  */
-const BODY_START_RATIO: Readonly<Record<FramingMode, number>> = { full: 0, roi: 0.45 };
 
 /** 把偵測到的內容分佈換算成實際像素的裁切框。 */
 export function planFraming(
   layout: ContentLayout,
   chrome: ChromeInsets,
-  mode: FramingMode,
   sourceWidth: number,
   sourceHeight: number,
   sampleWidth: number,
@@ -63,8 +63,7 @@ export function planFraming(
   const scaleY = sourceHeight / sampleHeight;
 
   // 介面元件是量出來的，不是假設的 —— 見 detectChrome。
-  const contentLeft = Math.max(layout.body.from, sampleWidth * chrome.left);
-  const bodyLeft = contentLeft + (layout.body.to - contentLeft) * BODY_START_RATIO[mode];
+  const bodyLeft = Math.max(layout.body.from, sampleWidth * chrome.left);
   // 垂直方向交給單幀投影 —— 見 detectChrome 的說明。
   const top = layout.vertical.from * scaleY;
   const bottom = layout.vertical.to * scaleY;
@@ -75,17 +74,18 @@ export function planFraming(
   const bodyX = toEvenOffset(bodyLeft * scaleX);
   const height = toEvenSize(Math.min(bottom - top, sourceHeight - toEvenOffset(top)));
 
-  // 沒有偵測到獨立的軸時，一路裁到畫面右緣。
+  // 沒有偵測到獨立的軸時，一路裁到畫面右緣（扣掉右側的介面元件）。
   //
   // 軸的偵測會隨畫面內容而不穩定（標籤稀疏的幀密度不足）。此時若只裁到
   // 主體右緣，價格軸會整個被切掉 —— 失敗模式應該是「框得不夠緊」，
   // 而不是「丟失價格資訊」。留著死留白也比看不到價位好。
   if (layout.axis === undefined) {
+    const rightEdge = sourceWidth * (1 - chrome.right);
     return {
       body: {
         x: bodyX,
         y: toEvenOffset(top),
-        width: clampWidth(bodyX, sourceWidth - bodyX),
+        width: clampWidth(bodyX, rightEdge - bodyX),
         height,
       },
     };
@@ -177,22 +177,34 @@ export function conformToChartAspect(
   const totalWidth = framing.body.width + axisWidth;
   const centre = framing.body.y + framing.body.height / 2;
 
+  // 上緣不可以往回退：內容偵測已經把頂部工具列排除在外，
+  // 若為了置中而把上緣往上拉，工具列會被吃回畫面裡。
+  const contentTop = framing.body.y;
   const wantedHeight = toEvenSize(totalWidth / TARGET_ASPECT);
-  if (wantedHeight <= sourceHeight) {
-    const y = toEvenOffset(Math.max(0, Math.min(centre - wantedHeight / 2, sourceHeight - wantedHeight)));
+
+  if (wantedHeight <= sourceHeight - contentTop) {
+    const y = toEvenOffset(
+      Math.max(contentTop, Math.min(centre - wantedHeight / 2, sourceHeight - wantedHeight)),
+    );
     return {
       body: { ...framing.body, y, height: wantedHeight },
       ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y, height: wantedHeight } }),
     };
   }
 
-  // 需要的高度超出畫面：改為收縮寬度，右緣不動（那裡是價格軸與最新的 K 棒）。
-  const height = toEvenSize(sourceHeight);
+  // 高度放不下（在不侵入介面元件的前提下）：改為收縮寬度，
+  // 右緣不動（那裡是價格軸與最新的 K 棒）。
+  const height = toEvenSize(sourceHeight - contentTop);
   const bodyWidth = toEvenSize(Math.max(2, height * TARGET_ASPECT - axisWidth));
   const bodyRight = framing.body.x + framing.body.width;
   return {
-    body: { x: toEvenOffset(Math.max(0, bodyRight - bodyWidth)), y: 0, width: bodyWidth, height },
-    ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y: 0, height } }),
+    body: {
+      x: toEvenOffset(Math.max(0, bodyRight - bodyWidth)),
+      y: contentTop,
+      width: bodyWidth,
+      height,
+    },
+    ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y: contentTop, height } }),
   };
 }
 
@@ -279,14 +291,6 @@ export async function planCutFraming(
   const midpoint = cut.start + (cut.end - cut.start) / 2;
   const sample = await sampleFrame(video, midpoint, sourceWidth, sourceHeight);
   const layout = detectContentLayout(sample.gray, sample.width, sample.height);
-  const framing = planFraming(
-    layout,
-    chrome,
-    cut.framing,
-    sourceWidth,
-    sourceHeight,
-    sample.width,
-    sample.height,
-  );
+  const framing = planFraming(layout, chrome, sourceWidth, sourceHeight, sample.width, sample.height);
   return conformToChartAspect(framing, sourceWidth, sourceHeight);
 }

@@ -27,18 +27,28 @@ async function main(): Promise<void> {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === undefined) continue;
-    if (arg === '--out') {
-      outValue = argv[index + 1];
-      if (outValue === undefined || outValue.startsWith('--')) {
-        log(USAGE);
-        process.exitCode = 1;
-        return;
-      }
-      index += 1;
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
       continue;
     }
-    if (arg.startsWith('--')) continue;
-    positional.push(arg);
+    if (arg === '--force') continue;
+
+    // 同時支援 `--out dist` 與 `--out=dist`；不認得的旗標視為用法錯誤 ——
+    // 靜靜吞掉打錯的旗標，使用者要等好幾分鐘的轉錄跑完才會發現。
+    const equals = arg.indexOf('=');
+    const name = equals >= 0 ? arg.slice(0, equals) : arg;
+    if (name !== '--out') {
+      log(USAGE);
+      process.exitCode = 1;
+      return;
+    }
+    outValue = equals >= 0 ? arg.slice(equals + 1) : argv[index + 1];
+    if (outValue === undefined || outValue.length === 0 || outValue.startsWith('--')) {
+      log(USAGE);
+      process.exitCode = 1;
+      return;
+    }
+    if (equals < 0) index += 1;
   }
 
   const video = positional[0];

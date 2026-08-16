@@ -91,16 +91,11 @@ CLI 分四個階段，各自可單獨執行，也可一次跑完：轉錄、定�
 
 ### 定位（見 ADR-0001）
 
-分兩層，偵測與分類分離，且只有偵測是字串比對：
+事件由**來源準備階段**依語意標記，不做字串比對。該階段本來就要讀完整份逐字稿來校正錯字，讓它順便標記事件的邊際成本是零——原本否決「模型做偵測」的唯一理由（整份餵進去太貴）因此不成立。
 
-- **T1 前綴偵測**：在正規化後的全文中找出前綴的每一次出現。零成本、決定性、召回導向。
-- **T2 分類過濾**：LLM 讀每個候選前後的上下文，判定它是不是錨點、屬於哪一種事件。一支影片一次批次呼叫，回應以輸入雜湊快取到磁碟。
+好處是講者不必說出固定字眼：「這筆進場」「這邊就進場」「我現在進了」都算數。實測十三分鐘樣本裡，兩個進場宣告根本不含任何固定前綴，字串比對再怎麼加變體也抓不到。
 
-**分類不維護語音辨識變體的白名單。** 實測變體包括止盈→只贏／止音、止損→止存／簡體形，而且誤聽是情境相關的（同一位講者說「那這筆就是止盈」時全對，說「TP1只贏了」時全錯），人工白名單追不上也無法窮舉。類別改為用自然語言描述每種事件，由分類器吸收變體——新增類別時也不必猜語音辨識會錯成什麼。
-
-準確度預算全花在前綴上：誤報由分類器濾掉，成本只是一次判定；漏偵測則無從察覺，分類器再聰明也救不回來。
-
-術語校正表仍然保留，但只用於修正燒進字幕的錯字，不參與定位。
+曾經有一層前綴字串比對作為交叉檢查，實測真陽性 0、偽陽性 1，已移除。
 
 ### 類別（見 ADR-0004）
 
@@ -111,32 +106,26 @@ CLI 分四個階段，各自可單獨執行，也可一次跑完：轉錄、定�
 ```ts
 interface Category {
   name: string
-  locator: Locator
+  vocabulary: EventVocabulary
   skeleton: Position[]
-  framing: FramingStrategy
   glossary: Record<string, string>
   duration: { target: number; min: number; max: number }
 }
 
-type Locator = {
-  kind: 'cue'
-  prefix: string          // 決定性偵測器
-  proximity: number       // 前綴後取多少字交給分類器
+interface EventVocabulary {
   events: Array<{
     id: string
     role: 'open' | 'close'
-    description: string   // 給分類器讀的自然語言，不是比對字串
+    description: string   // 給標記階段讀的自然語言，不是比對字串
     outcome?: string
   }>
 }
 
 interface Position {
   id: string
-  // anchor 引用角色而非事件 id —— 骨架不需要知道結束錨點是止盈還是止損
-  source: { anchor: 'open' | 'close'; from: number; to: number }
-  framing: 'full' | 'roi'
-  audio: 'original' | 'mute'
-  speed?: number
+  cardBrief: string       // 這個位置的文案要傳達什麼
+  // 只規定「可以從哪裡取材」，不規定切點 —— 實際取哪一段由規劃器依內容決定
+  source: { anchor: 'open' | 'close'; direction: 'before' | 'after' | 'around'; reach: number }
   collapsible: boolean
 }
 ```

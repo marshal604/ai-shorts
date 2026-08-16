@@ -44,8 +44,10 @@ async function main(): Promise<void> {
   const dimensions = await probeDimensions(anchors.source.video);
   log(`${anchors.spans.length} 個區段，來源 ${dimensions.width}x${dimensions.height}`);
 
+  let failed = 0;
   for (const span of anchors.spans) {
     log(`\n區段 #${span.index}  ${stamp(span.openAt)}–${stamp(span.closeAt)}  ${span.outcome}`);
+    try {
     const { plan, durationDelta } = await buildPlan({
       span,
       transcript,
@@ -65,6 +67,16 @@ async function main(): Promise<void> {
       if (card !== undefined) log(`           ${card.kind === 'title' ? '標題' : '字幕'}「${card.text}」`);
     });
     process.stdout.write(`${path}\n`);
+    } catch (error: unknown) {
+      // 一個區段失敗不該讓後面的區段一起沒了 —— 它們彼此獨立。
+      failed += 1;
+      log(`  ⚠ 這個區段規劃失敗：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (failed > 0) {
+    log(`\n${failed} 個區段沒有產出計畫，其餘已完成。`);
+    process.exitCode = 1;
   }
 }
 

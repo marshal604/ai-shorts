@@ -1,6 +1,7 @@
 import { ExternalToolError } from '../errors.ts';
 import { ask, extractJson } from '../llm/client.ts';
 import type { Card, Category, Plan, Position, Span, Transcript } from '../types.ts';
+import { cardLimits, measureCard } from '../render/text.ts';
 import { buildTimeline, readingSeconds } from './timeline.ts';
 import type { Selection } from './timeline.ts';
 
@@ -74,6 +75,8 @@ function buildPrompt(span: Span, category: Category, transcript: Transcript): st
   return [
     `這筆交易的結果是「${span.outcome}」，從 ${span.openAt.toFixed(1)} 秒進場、${span.closeAt.toFixed(1)} 秒結束。`,
     `短影片的目標長度約 ${category.duration.target} 秒，但以把內容講完、節奏流暢為準，不必硬湊。`,
+    `文案有字數上限：標題最多 ${cardLimits('title')} 字，字幕最多 ${cardLimits('caption')} 字。` +
+      '超過會被截掉，句子就只講一半，所以寧可寫短。',
     '',
     '位置與素材：',
     '',
@@ -122,7 +125,6 @@ function parsePositions(
 
     selections.push({
       positionId: position.id,
-      framing: position.framing,
       start,
       end,
       cardText: item.text.trim(),
@@ -162,6 +164,24 @@ function assertRequiredPositions(selections: readonly Selection[], category: Cat
   }
 }
 
+/**
+ * 文案放不下的話在規劃階段就要失敗。
+ * 拖到渲染階段才擋下，使用者得等到跑完整條管線才知道要手改計畫。
+ */
+function assertCardsFit(selections: readonly Selection[]): void {
+  const tooLong = selections
+    .filter((selection) => measureCard(selection.cardKind, selection.cardText).overflows)
+    .map((selection) => `${selection.positionId}（${selection.cardText.length} 字）`);
+
+  if (tooLong.length > 0) {
+    throw new ExternalToolError(
+      'anthropic',
+      null,
+      `這些文案超過字數上限，會被截掉：${tooLong.join('、')}`,
+    );
+  }
+}
+
 export interface BuildPlanOptions {
   readonly span: Span;
   readonly transcript: Transcript;
@@ -185,6 +205,7 @@ export async function buildPlan(options: BuildPlanOptions): Promise<PlanResult> 
 
   const parsed = parsePositions(extractJson(text), options.category, options.span);
   assertRequiredPositions(parsed.selections, options.category);
+  assertCardsFit(parsed.selections);
 
   const timeline = buildTimeline(parsed.selections);
 

@@ -7,7 +7,6 @@ import type { Span } from '../src/types.ts';
 
 const pick = (over: Partial<Selection> = {}): Selection => ({
   positionId: 'entry',
-  framing: 'roi',
   start: 100,
   end: 110,
   cardText: '空單進場',

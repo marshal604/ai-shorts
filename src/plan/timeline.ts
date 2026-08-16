@@ -1,4 +1,4 @@
-import type { Card, Cut, FramingMode } from '../types.ts';
+import type { Card, Cut } from '../types.ts';
 
 /**
  * 把規劃器選出的素材區間換算成成品的時間軸。
@@ -23,7 +23,6 @@ export function readingSeconds(text: string): number {
 
 export interface Selection {
   readonly positionId: string;
-  readonly framing: FramingMode;
   /** 規劃器從取材窗口裡選出的長影片時間區間。 */
   readonly start: number;
   readonly end: number;
@@ -60,15 +59,19 @@ export function buildTimeline(selections: readonly Selection[]): Timeline {
     const sourceSpan = selection.end - selection.start;
     if (sourceSpan <= 0) continue;
 
-    const output = outputSeconds(sourceSpan, selection.cardText);
-    const speed = sourceSpan / output;
+    const wanted = outputSeconds(sourceSpan, selection.cardText);
+    const rawSpeed = sourceSpan / wanted;
+    // 接近原速時不寫倍速欄位，但成品長度要用「實際會播多久」而不是想要多久 ——
+    // 否則卡的時間會比片段短個百分之幾，逐段累積下來卡會愈跑愈前面。
+    const usesSpeed = Math.abs(rawSpeed - 1) >= 0.02;
+    const speed = usesSpeed ? Number(rawSpeed.toFixed(3)) : 1;
+    const output = sourceSpan / speed;
 
     cuts.push({
       positionId: selection.positionId,
       start: selection.start,
       end: selection.end,
-      framing: selection.framing,
-      ...(Math.abs(speed - 1) < 0.02 ? {} : { speed: Number(speed.toFixed(3)) }),
+      ...(usesSpeed ? { speed } : {}),
     });
 
     if (selection.cardText.length > 0) {

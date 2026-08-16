@@ -14,12 +14,18 @@ const fixture = JSON.parse(
 const cardPaths = (plan: Plan) => plan.cards.map((_, index) => `/tmp/card-${index}.png`);
 
 // 測試不跑抽幀：直接給裁切計畫，讓濾鏡圖的組裝可以單獨斷言。
+// 交替給「有偵測到價格軸」與「沒有」兩種，兩條路徑都要被涵蓋。
 const framingsFor = (plan: Plan) =>
-  plan.cuts.map((cut) =>
-    cut.framing === 'roi'
-      ? { body: { x: 1140, y: 146, width: 1600, height: 1534 }, axis: { x: 2860, y: 146, width: 398, height: 1534 } }
+  plan.cuts.map((_, index) =>
+    index % 2 === 1
+      ? {
+          body: { x: 114, y: 146, width: 2600, height: 1534 },
+          axis: { x: 2860, y: 146, width: 398, height: 1534 },
+        }
       : { body: { x: 114, y: 64, width: 3030, height: 1680 } },
   );
+
+const withAxisCount = (plan: Plan) => plan.cuts.filter((_, index) => index % 2 === 1).length;
 
 const argsOf = (plan: Plan, music: MusicConfig = DEFAULT_MUSIC): string[] =>
   buildFfmpegArgs(plan, {
@@ -76,18 +82,17 @@ describe('影像組裝', () => {
   it('裁切框來自各片段自己的計畫，不是寫死的比例', () => {
     const filter = filterOf(fixture);
     expect(filter).toContain('crop=3030:1680:114:64');
-    expect(filter).toContain('crop=1600:1534:1140:146');
+    expect(filter).toContain('crop=2600:1534:114:146');
   });
 
   it('偵測到價格軸時把它水平接到主體右緣，剪掉中間的死留白', () => {
     const filter = filterOf(fixture);
-    const roiCount = fixture.cuts.filter((cut) => cut.framing === 'roi').length;
-    expect(filter.split('hstack=inputs=2').length - 1).toBe(roiCount);
+    expect(filter.split('hstack=inputs=2').length - 1).toBe(withAxisCount(fixture));
     expect(filter).toContain('crop=398:1534:2860:146');
   });
 
   it('沒有偵測到價格軸的片段不做併攏', () => {
-    const bare: Plan = { ...fixture, cuts: [{ positionId: 'x', start: 0, end: 4, framing: 'full' }], cards: [] };
+    const bare: Plan = { ...fixture, cuts: [{ positionId: 'x', start: 0, end: 4 }], cards: [] };
     expect(filterOf(bare)).not.toContain('hstack');
   });
 });
@@ -138,7 +143,7 @@ describe('背景音樂', () => {
   it('淡出不會早於片頭 —— 極短的片子也要能渲染', () => {
     const tiny: Plan = {
       ...fixture,
-      cuts: [{ positionId: 'only', start: 0, end: 1, framing: 'roi' }],
+      cuts: [{ positionId: 'only', start: 0, end: 1 }],
       cards: [],
     };
     const filter = filterOf(tiny, { gainDb: -20, fadeInSeconds: 5, fadeOutSeconds: 5 });
@@ -157,9 +162,16 @@ describe('文案卡圖層', () => {
     const filter = filterOf(fixture);
     for (const card of fixture.cards) {
       expect(filter).toContain(
-        `enable='between(t,${card.start.toFixed(3)},${card.end.toFixed(3)})'`,
+        `enable='gte(t,${card.start.toFixed(3)})*lt(t,${card.end.toFixed(3)})'`,
       );
     }
+  });
+
+  it('時間區間左閉右開 —— between 兩端都含，相鄰的卡會在交界那一幀重疊', () => {
+    const filter = filterOf(fixture);
+    expect(filter).not.toContain('between(t,');
+    expect(filter).toContain('gte(t,');
+    expect(filter).toContain('lt(t,');
   });
 
   it('沒有文案卡時仍然渲染得出影片', () => {
@@ -182,7 +194,7 @@ describe('計畫驗證', () => {
   it('拒絕結束早於開始的片段', () => {
     const broken: Plan = {
       ...fixture,
-      cuts: [{ positionId: 'x', start: 10, end: 5, framing: 'roi' }],
+      cuts: [{ positionId: 'x', start: 10, end: 5 }],
     };
     expect(() => validatePlan(broken)).toThrow(PlanValidationError);
   });
@@ -190,7 +202,7 @@ describe('計畫驗證', () => {
   it('拒絕非正數的倍速', () => {
     const broken: Plan = {
       ...fixture,
-      cuts: [{ positionId: 'x', start: 1, end: 5, framing: 'roi', speed: 0 }],
+      cuts: [{ positionId: 'x', start: 1, end: 5, speed: 0 }],
     };
     expect(() => validatePlan(broken)).toThrow(/speed/);
   });
@@ -254,7 +266,7 @@ describe('計畫驗證', () => {
   it('拒絕沒有 positionId 的片段 —— metadata 會印出 undefined', () => {
     const broken: Plan = {
       ...fixture,
-      cuts: [{ start: 0, end: 5, framing: 'roi' } as never],
+      cuts: [{ start: 0, end: 5 } as never],
     };
     expect(() => validatePlan(broken)).toThrow(/positionId/);
   });
@@ -283,7 +295,7 @@ describe('計畫驗證', () => {
     const broken: Plan = {
       ...fixture,
       source: { ...fixture.source, width: 0 },
-      cuts: [{ positionId: 'x', start: -1, end: -5, framing: 'roi' }],
+      cuts: [{ positionId: 'x', start: -1, end: -5 }],
     };
     expect(() => validatePlan(broken)).toThrow(/source\.width[\s\S]*start[\s\S]*end/);
   });

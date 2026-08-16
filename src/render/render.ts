@@ -80,9 +80,6 @@ function validateCut(cut: unknown, index: number, problems: string[]): void {
   } else if (isFiniteNumber(start) && end <= start) {
     problems.push(`${label}：end 必須大於 start`);
   }
-  if (cut['framing'] !== 'full' && cut['framing'] !== 'roi') {
-    problems.push(`${label}：framing 必須是 full 或 roi`);
-  }
 
   const speed = cut['speed'];
   if (speed !== undefined && (!isFiniteNumber(speed) || speed <= 0)) {
@@ -250,7 +247,7 @@ export function outputBasename(plan: Plan): string {
 function metadataMarkdown(plan: Plan, durationSeconds: number): string {
   const cutRow = (cut: Cut): string =>
     `| ${cut.positionId} | ${readableTimecode(cut.start)}–${readableTimecode(cut.end)} | ` +
-    `${cut.framing} | ${cut.speed ?? 1}x | ${cutDuration(cut).toFixed(2)}s |`;
+    `${cut.speed ?? 1}x | ${cutDuration(cut).toFixed(2)}s |`;
 
   const cardRow = (card: Card): string =>
     `| ${card.kind} | ${card.start.toFixed(1)}–${card.end.toFixed(1)}s | ${card.text} |`;
@@ -271,8 +268,8 @@ function metadataMarkdown(plan: Plan, durationSeconds: number): string {
     '',
     '## 片段',
     '',
-    '| 位置 | 長影片時間 | 構圖 | 倍速 | 成品長度 |',
-    '|---|---|---|---|---|',
+    '| 位置 | 長影片時間 | 倍速 | 成品長度 |',
+    '|---|---|---|---|',
     ...plan.cuts.map(cutRow),
     '',
     '## 文案卡',

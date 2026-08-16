@@ -37,16 +37,23 @@ export function run(
     });
 
     if (options.input !== undefined) {
+      // 子行程可能在讀完之前就結束；沒有這個監聽器，EPIPE 會變成未處理例外。
+      child.stdin?.on('error', () => undefined);
       child.stdin?.end(options.input);
     }
 
+    // 一定要設編碼，不能逐塊 toString()：多位元組字元跨越塊邊界時，
+    // 每塊各自解碼會把它切成兩個替代字元。中文內容幾乎必然踩到。
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+
     let stdout = '';
     let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+    child.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk;
     });
 
     child.on('error', (cause: Error) => {
@@ -80,8 +87,9 @@ export function runBinary(
     const chunks: Buffer[] = [];
     let stderr = '';
     child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr += chunk;
     });
 
     child.on('error', (cause: Error) => {

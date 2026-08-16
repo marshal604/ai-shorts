@@ -95,8 +95,10 @@ function cardChains(cards: readonly Card[], firstCardInput: number): {
     const next = `vc${index}`;
     chains.push(`[${input}:v]format=rgba,setsar=1[card${index}]`);
     chains.push(
+      // 用左閉右開而非 between —— between 兩端都含，相鄰的兩張卡會在
+      // 交界那一幀同時畫上去，字幕區糊成一團。
       `[${current}][card${index}]overlay=0:0:` +
-        `enable='between(t,${card.start.toFixed(3)},${card.end.toFixed(3)})'[${next}]`,
+        `enable='gte(t,${card.start.toFixed(3)})*lt(t,${card.end.toFixed(3)})'[${next}]`,
     );
     current = next;
   });
@@ -105,9 +107,15 @@ function cardChains(cards: readonly Card[], firstCardInput: number): {
 }
 
 function filterComplex(plan: Plan, inputs: RenderInputs, duration: number): string {
-  const chains = plan.cuts.flatMap((cut, index) =>
-    videoChain(cut, index, inputs.framings[index] ?? { body: { x: 0, y: 0, width: plan.source.width, height: plan.source.height } }),
-  );
+  const chains = plan.cuts.flatMap((cut, index) => {
+    const framing = inputs.framings[index];
+    // 沒有裁切計畫時不要退回整幅：整幅的比例與共用矩形不同，
+    // 縮放會把畫面拉變形 —— 那是靜默的錯誤，不如直接失敗。
+    if (framing === undefined) {
+      throw new Error(`片段 ${index}（${cut.positionId}）沒有對應的裁切計畫`);
+    }
+    return videoChain(cut, index, framing);
+  });
 
   const concatLabels = plan.cuts.map((_, index) => `[v${index}]`).join('');
   chains.push(`${concatLabels}concat=n=${plan.cuts.length}:v=1:a=0[vbase]`);

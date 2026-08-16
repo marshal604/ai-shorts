@@ -194,6 +194,12 @@ export function buildCardSvg(card: Card): string {
   ].join('');
 }
 
+/** 一張卡最多幾個字。規劃階段要知道，才不會產出會被截掉的文案。 */
+export function cardLimits(kind: CardKind): number {
+  const style = STYLES[kind];
+  return style.maxCharsPerLine * style.maxLines;
+}
+
 export interface CardFit {
   readonly lines: number;
   readonly maxLines: number;
