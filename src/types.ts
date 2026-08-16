@@ -68,6 +68,11 @@ export interface Position {
   readonly id: string;
   readonly source: PositionSource;
   readonly framing: FramingMode;
+  /**
+   * 這個位置的文案卡要傳達什麼，用自然語言寫給規劃器讀。
+   * 沒有人聲，卡就是敘事本身 —— 每個位置該講什麼是題材知識，屬於類別。
+   */
+  readonly cardBrief: string;
   /** 播放倍速，省略即原速。原聲已不使用，因此任何位置都可以變速。 */
   readonly speed?: number;
   /** 素材不存在時可消失而非報錯（ADR-0004）。 */

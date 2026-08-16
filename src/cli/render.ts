@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { renderPlan, validatePlan } from '../render/render.ts';
 import { planDuration } from '../render/filtergraph.ts';
+import { resolveMusic } from '../render/music.ts';
 import { trading } from '../categories/trading.ts';
 import type { MusicConfig } from '../types.ts';
 import { parseArgs } from './args.ts';
@@ -17,7 +18,7 @@ function log(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
-function resolveMusic(musicPath: string | undefined): MusicConfig {
+function musicFor(musicPath: string | undefined): MusicConfig {
   return musicPath === undefined ? trading.music : { ...trading.music, path: musicPath };
 }
 
@@ -33,7 +34,9 @@ async function main(): Promise<void> {
   const plan: unknown = JSON.parse(await readFile(args.planPath, 'utf8'));
   validatePlan(plan);
 
-  const music = resolveMusic(args.musicPath);
+  const resolved = await resolveMusic(musicFor(args.musicPath));
+  if (resolved.warning !== undefined) log(`⚠ ${resolved.warning}`);
+  const music = resolved.music;
   log(
     `[${plan.span.outcome}] 區段 ${plan.span.index}，${plan.cuts.length} 個片段、` +
       `${plan.cards.length} 張文案卡，預計 ${planDuration(plan).toFixed(1)} 秒`,

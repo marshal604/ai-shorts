@@ -53,37 +53,73 @@ const NO_LINE_START = '。，、；：！？）」』〉》…·．,.!?:;)]}';
 /** 一行最多為了標點多吃幾個字。沒有上限的話連續標點會把整行推出畫布。 */
 const MAX_PUNCTUATION_PULL = 2;
 
+/** 最後一行短於這個長度就視為孤字，從上一行搬一個 token 下來。 */
+const ORPHAN_THRESHOLD = 2;
+
 /**
- * 中文依閱讀單位斷行，不依語音停頓。中文可在任意字之間斷開，
- * 所以只需控制每行字數，並避免把標點推到行首。
+ * 可斷行的最小單位：一個中文字，或一整串拉丁字母與數字。
+ *
+ * 中文可以在任意字之間斷開，但 `FVG`、`1.19`、`4,038.2`、`TP2` 不行 ——
+ * 逐字元斷行會產出「FV / G」「1. / 19」這種讀不懂的東西。
+ */
+const TOKEN = /[A-Za-z0-9]+(?:[.,][A-Za-z0-9]+)*|[\s\S]/gu;
+
+function tokenize(text: string): string[] {
+  return text.match(TOKEN) ?? [];
+}
+
+/**
+ * 中文依閱讀單位斷行，不依語音停頓。以 token 為單位貪婪填行，
+ * 並避免把標點推到行首。
  */
 export function wrapChinese(text: string, maxCharsPerLine: number): string[] {
-  const normalized = text.trim();
-  if (normalized.length === 0) return [];
+  const tokens = tokenize(text.trim());
+  if (tokens.length === 0) return [];
 
   const lines: string[] = [];
-  let cursor = 0;
+  let line = '';
+  let pulled = 0;
 
-  while (cursor < normalized.length) {
-    let take = Math.min(maxCharsPerLine, normalized.length - cursor);
-
-    // 下一行的第一個字是標點的話，把它併進這一行。
-    // 設上限：連續標點（例如「。。。…」）若無限往回拉，一行會遠超過畫布寬度。
-    let pulled = 0;
-    while (
-      pulled < MAX_PUNCTUATION_PULL &&
-      cursor + take < normalized.length &&
-      NO_LINE_START.includes(normalized[cursor + take] as string)
-    ) {
-      take += 1;
+  for (const token of tokens) {
+    // 行首的標點往前一行拉，但有上限 —— 連續標點會把整行推出畫布。
+    if (line === '' && lines.length > 0 && NO_LINE_START.includes(token) && pulled < MAX_PUNCTUATION_PULL) {
+      lines[lines.length - 1] += token;
       pulled += 1;
+      continue;
     }
 
-    lines.push(normalized.slice(cursor, cursor + take));
-    cursor += take;
+    if (line.length > 0 && line.length + token.length > maxCharsPerLine) {
+      lines.push(line);
+      line = '';
+      pulled = 0;
+    }
+    line += token;
   }
 
-  return lines;
+  if (line.length > 0) lines.push(line);
+  return rebalanceOrphan(lines.map((entry) => entry.trim()).filter((entry) => entry.length > 0));
+}
+
+/**
+ * 最後一行只剩一兩個字（孤字）時，從上一行把最後一個 token 搬下來。
+ * 「⋯的反 / 應」讀起來像斷掉，「⋯的 / 反應」才是一個詞。
+ */
+function rebalanceOrphan(lines: readonly string[]): string[] {
+  if (lines.length < 2) return [...lines];
+
+  const last = lines[lines.length - 1] as string;
+  const previous = lines[lines.length - 2] as string;
+  if (last.length > ORPHAN_THRESHOLD) return [...lines];
+
+  const tokens = tokenize(previous);
+  if (tokens.length < 2) return [...lines];
+
+  const moved = tokens[tokens.length - 1] as string;
+  return [
+    ...lines.slice(0, -2),
+    tokens.slice(0, -1).join(''),
+    `${moved}${last}`,
+  ];
 }
 
 /**

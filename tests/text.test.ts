@@ -11,9 +11,10 @@ describe('中文斷行', () => {
     }
   });
 
-  it('全部內容都被保留，不會漏字', () => {
+  it('不會漏字 —— 斷行處的空白會被吃掉，但沒有實質內容遺失', () => {
     const text = '停損放在下緣，TP1 是 1.19，TP2 是 4.79';
-    expect(wrapChinese(text, 10).join('')).toBe(text);
+    const strip = (value: string) => value.replace(/\s+/g, '');
+    expect(strip(wrapChinese(text, 10).join(''))).toBe(strip(text));
   });
 
   it('標點不會被推到行首', () => {
@@ -29,6 +30,36 @@ describe('中文斷行', () => {
 
   it('空字串產出零行，不是一行空的', () => {
     expect(wrapChinese('   ', 12)).toEqual([]);
+  });
+
+  it('不會把數字拆開 —— 「1.19」不能變成「1.」「19」', () => {
+    for (const line of wrapChinese('SL 止損 · RR 1.19', 13)) {
+      expect(line).not.toMatch(/\d\.$/);
+      expect(line).not.toMatch(/^\d+$/);
+    }
+    expect(wrapChinese('SL 止損 · RR 1.19', 13).join('')).toContain('1.19');
+  });
+
+  it('不會把英文詞拆開 —— 「FVG」不能變成「FV」「G」', () => {
+    const lines = wrapChinese('流動性掃過，這裡留下一個 FVG', 13);
+    expect(lines.some((line) => line.includes('FVG'))).toBe(true);
+    expect(lines).not.toContain('G');
+  });
+
+  it('含逗號的價位視為一個整體', () => {
+    const lines = wrapChinese('價格來到 4,038.2 附近有反應', 8);
+    expect(lines.some((line) => line.includes('4,038.2'))).toBe(true);
+  });
+
+  it('最後一行不會只剩一個孤字', () => {
+    const lines = wrapChinese('盤面：等 0.382 的反應', 13);
+    expect((lines[lines.length - 1] as string).length).toBeGreaterThan(1);
+  });
+
+  it('連續標點不會把整行推出畫布', () => {
+    for (const line of wrapChinese('好的。。。…。結束了呢', 5)) {
+      expect(line.length).toBeLessThanOrEqual(8);
+    }
   });
 });
 

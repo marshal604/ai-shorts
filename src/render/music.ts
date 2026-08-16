@@ -1,3 +1,4 @@
+import { access, constants } from 'node:fs/promises';
 import type { MusicConfig } from '../types.ts';
 
 const SAMPLE_RATE = 48_000;
@@ -102,4 +103,25 @@ export function buildMusicChain(
     chain: fileBed(music, duration, nextInputIndex),
     inputCount: 1,
   };
+}
+
+export interface ResolvedMusic {
+  readonly music: MusicConfig;
+  /** 有值代表發生了降級，呼叫端應該讓使用者知道。 */
+  readonly warning?: string;
+}
+
+/**
+ * 音樂檔可能不存在 —— 音訊資產不進版控，所以新複製出來的工作目錄不會有它。
+ * 這種情況下退回程式生成的底樂，而不是讓整段渲染在最後一刻失敗。
+ */
+export async function resolveMusic(music: MusicConfig): Promise<ResolvedMusic> {
+  if (music.path === undefined) return { music };
+  try {
+    await access(music.path, constants.R_OK);
+    return { music };
+  } catch {
+    const { path, ...withoutPath } = music;
+    return { music: withoutPath, warning: `找不到音樂檔 ${path}，改用程式生成的環境底樂` };
+  }
 }

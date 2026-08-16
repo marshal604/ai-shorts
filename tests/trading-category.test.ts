@@ -68,8 +68,14 @@ describe('交易類別', () => {
     expect(trading.duration.target).toBeLessThanOrEqual(trading.duration.max);
   });
 
-  it('未指定音樂檔時用程式生成的底樂 —— 零授權風險', () => {
-    expect(trading.music.path).toBeUndefined();
+  it('預設指向 YouTube 音樂庫的曲目，檔案不存在時會降級', () => {
+    expect(trading.music.path).toMatch(/assets\/music\/.+\.m4a$/);
+  });
+
+  it('每個骨架位置都說明了它的文案要講什麼 —— 沒有人聲，卡就是敘事', () => {
+    for (const position of trading.skeleton) {
+      expect(position.cardBrief.length).toBeGreaterThan(8);
+    }
   });
 
   it('音樂音量壓在底噪，不搶畫面', () => {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { Category } from '../types.ts';
 
 /**
@@ -48,12 +49,14 @@ export const trading: Category = {
   skeleton: [
     {
       id: 'hook',
+      cardBrief: '結果與風報比：止盈或止損，以及這筆的 RR 是多少。這是破梗，要最短最直接。',
       source: { anchor: 'close', from: -2, to: 1 },
       framing: 'roi',
       collapsible: false,
     },
     {
       id: 'context',
+      cardBrief: '斐波那契設置或當下關注的關鍵點位，說明進場前在等什麼。',
       source: { anchor: 'open', from: -83, to: -69 },
       framing: 'full',
       speed: 2.5,
@@ -61,6 +64,7 @@ export const trading: Category = {
     },
     {
       id: 'setup',
+      cardBrief: '關鍵 K 棒與進場原因：是哪一根、為什麼是這裡。',
       source: { anchor: 'open', from: -55, to: -42 },
       framing: 'roi',
       speed: 2,
@@ -68,6 +72,7 @@ export const trading: Category = {
     },
     {
       id: 'entry',
+      cardBrief: '實際進場的方向與停損停利設定，含風報比。',
       source: { anchor: 'open', from: -2, to: 7 },
       framing: 'roi',
       speed: 1.5,
@@ -75,6 +80,7 @@ export const trading: Category = {
     },
     {
       id: 'holding',
+      cardBrief: '持倉過程加速走向停利或停損，可加一句簡短旁白帶節奏。',
       source: { anchor: 'open', from: 7, to: 17 },
       framing: 'full',
       speed: 8,
@@ -82,6 +88,7 @@ export const trading: Category = {
     },
     {
       id: 'reveal',
+      cardBrief: '最終結果：止盈或止損，以及是怎麼收掉的。',
       source: { anchor: 'close', from: -3, to: 7 },
       framing: 'roi',
       collapsible: false,
@@ -102,6 +109,13 @@ export const trading: Category = {
   // 長度由文案卡的字數決定，不再由說話節奏決定。
   duration: { target: 35, min: 25, max: 50 },
 
-  // 未指定 path 就用程式生成的環境底樂：沒有版權持有人，也不會被平台認領。
-  music: { gainDb: -14, fadeInSeconds: 1.5, fadeOutSeconds: 2 },
+  // YouTube 音樂庫的曲目（Wayne Jones - A Quiet Thought）。音訊資產不進版控，
+  // 檔案不存在時會自動退回程式生成的環境底樂，見 resolveMusic。
+  // 路徑相對於模組而非工作目錄 —— 從任何目錄執行都要指得到。
+  music: {
+    path: fileURLToPath(new URL('../../assets/music/a-quiet-thought.m4a', import.meta.url)),
+    gainDb: -14,
+    fadeInSeconds: 1.5,
+    fadeOutSeconds: 2,
+  },
 };
