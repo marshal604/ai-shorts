@@ -27,9 +27,39 @@ export interface DetectOptions {
   readonly density?: number;
   /** 連續多少像素才算一個區塊，用來濾掉細線與雜訊。 */
   readonly minRun?: number;
+  /**
+   * 一欄裡最長的連續垂直內容段要佔畫面高度多少比例，才算「有結構」。
+   *
+   * 用來分辨 K 棒與虛線：K 棒的實體加影線在垂直方向是一整段，
+   * 虛線不論橫的直的都只有一小截。實測 3258x1826 的 TradingView 錄影
+   * （取樣成 640x358）：死留白區的最長段固定是 16 —— 那是 session
+   * 分隔虛線的 dash 長度，整片留白裡每一欄都量得到；K 棒區在邊界處是
+   * 19 到 24，中段可以到 286。取 0.05（約 18 列）落在兩者之間。
+   */
+  readonly structure?: number;
+  /** 價格軸的欄密度下限。 */
+  readonly axisDensity?: number;
 }
 
-const DEFAULTS = { threshold: 14, density: 0.012, minRun: 26 } as const;
+const DEFAULTS = {
+  threshold: 14,
+  density: 0.012,
+  minRun: 26,
+  structure: 0.05,
+  axisDensity: 0.25,
+} as const;
+
+/** 價格軸至少要這麼寬（佔畫面比例），否則視為雜訊。 */
+const AXIS_MIN_WIDTH_RATIO = 0.012;
+
+/** 價格軸必須從這個比例之後才開始 —— 它是貼著右緣的一條窄帶。 */
+const AXIS_MIN_START_RATIO = 0.85;
+
+/** 判定主體右界時，往回看幾欄找同伴，避免單一雜訊欄把邊界推出去。 */
+const STRUCTURE_WINDOW = 16;
+
+/** 一個窗口裡要有幾欄有結構，該處才算真的還在主體內。 */
+const STRUCTURE_QUORUM = 2;
 
 /** 全幀眾數即背景色 —— 螢幕錄影的背景佔絕大多數像素。 */
 export function backgroundLevel(gray: Uint8Array): number {
@@ -49,12 +79,17 @@ export function backgroundLevel(gray: Uint8Array): number {
 interface Projections {
   readonly columns: Float32Array;
   readonly rows: Float32Array;
+  /** 每一欄最長的連續垂直內容段，除以畫面高度。 */
+  readonly structure: Float32Array;
 }
 
 function project(gray: Uint8Array, width: number, height: number, threshold: number): Projections {
   const columns = new Float32Array(width);
   const rows = new Float32Array(height);
+  const structure = new Float32Array(width);
   const background = backgroundLevel(gray);
+  // 逐欄累計「目前這一段連續內容有多長」，掃完就是該欄的最長段。
+  const running = new Int32Array(width);
 
   for (let y = 0; y < height; y += 1) {
     const offset = y * width;
@@ -62,13 +97,20 @@ function project(gray: Uint8Array, width: number, height: number, threshold: num
       if (Math.abs((gray[offset + x] ?? background) - background) > threshold) {
         columns[x] = (columns[x] ?? 0) + 1;
         rows[y] = (rows[y] ?? 0) + 1;
+        running[x] = (running[x] ?? 0) + 1;
+        if ((running[x] ?? 0) > (structure[x] ?? 0)) structure[x] = running[x] ?? 0;
+      } else {
+        running[x] = 0;
       }
     }
   }
 
-  for (let x = 0; x < width; x += 1) columns[x] = (columns[x] ?? 0) / height;
+  for (let x = 0; x < width; x += 1) {
+    columns[x] = (columns[x] ?? 0) / height;
+    structure[x] = (structure[x] ?? 0) / height;
+  }
   for (let y = 0; y < height; y += 1) rows[y] = (rows[y] ?? 0) / width;
-  return { columns, rows };
+  return { columns, rows, structure };
 }
 
 /** 把「密度超過門檻」的連續區段找出來，短於 minRun 的視為雜訊。 */
@@ -95,31 +137,61 @@ export function runsAbove(
 }
 
 /**
- * 把欄方向的內容區段分成「主體」與「右側軸」。
+ * 從右緣往內找價格軸。
  *
- * 價格軸在畫面最右側，與 K 線之間隔著一段會隨時間變動的空白。
- * 最後一個區段若確實靠近右緣、且與前一段之間有明顯間隙，就視為軸。
+ * 不能靠「主體與軸之間有空隙」來切。replay 的死留白裡穿著整幅寬的水平
+ * fib 虛線與垂直 session 分隔線，欄密度從來不歸零，主體與軸在投影上
+ * 永遠連成同一段 —— 實測同一支影片的三個取樣點，有兩個切不開，於是
+ * 一路裁到右緣，把三百多像素的死留白留在畫面上。
+ *
+ * 改用軸自己的特徵：它是一整排右對齊的價格標籤，欄密度實測 0.49–0.59，
+ * 比 K 線區的 0.10–0.20 高一個量級。從右緣往內走到密度掉下門檻為止，
+ * 不需要任何間隙。
  */
-function splitBodyAndAxis(runs: readonly Range[], width: number): {
-  body: Range;
-  axis?: Range;
-} {
-  if (runs.length === 0) return { body: { from: 0, to: width } };
-
-  const last = runs[runs.length - 1] as Range;
-  const nearRightEdge = last.to >= width * 0.95;
-  const previous = runs[runs.length - 2];
-
-  if (runs.length >= 2 && nearRightEdge && previous !== undefined) {
-    const gap = last.from - previous.to;
-    if (gap >= width * 0.02) {
-      const first = runs[0] as Range;
-      return { body: { from: first.from, to: previous.to }, axis: last };
-    }
+export function detectAxis(
+  columns: Float32Array | readonly number[],
+  width: number,
+  axisDensity: number,
+): Range | undefined {
+  // 不能直接從最右一欄開始走：畫面最邊上通常有一兩欄空的留白，
+  // 從那裡起掃第一步就會停下來，軸就永遠偵測不到。
+  let end = -1;
+  for (let x = width - 1; x >= Math.floor(width * AXIS_MIN_START_RATIO); x -= 1) {
+    if ((columns[x] ?? 0) >= axisDensity) { end = x; break; }
   }
+  if (end < 0) return undefined;
 
-  const first = runs[0] as Range;
-  return { body: { from: first.from, to: last.to } };
+  let from = end;
+  while (from > 0 && (columns[from - 1] ?? 0) >= axisDensity) from -= 1;
+
+  const to = end + 1;
+  if (to - from < width * AXIS_MIN_WIDTH_RATIO) return undefined;
+  // 太寬就不是軸了 —— 多半是整幅畫面都很密（例如全螢幕的深色面板）。
+  if (from < width * AXIS_MIN_START_RATIO) return undefined;
+  return { from, to };
+}
+
+/**
+ * 主體的右界：最後一欄仍然有「結構」的位置。
+ *
+ * 只看單欄會被雜訊拉走，所以要求往回 STRUCTURE_WINDOW 欄之內至少有
+ * STRUCTURE_QUORUM 欄同樣有結構。
+ */
+function lastStructuralColumn(
+  structure: Float32Array | readonly number[],
+  limit: number,
+  minimum: number,
+): number {
+  let last = -1;
+  for (let x = 0; x < limit; x += 1) {
+    if ((structure[x] ?? 0) <= minimum) continue;
+    let peers = 0;
+    for (let back = Math.max(0, x - STRUCTURE_WINDOW); back <= x; back += 1) {
+      if ((structure[back] ?? 0) > minimum) peers += 1;
+    }
+    if (peers >= STRUCTURE_QUORUM) last = x;
+  }
+  return last;
 }
 
 /**
@@ -135,11 +207,26 @@ export function detectContentLayout(
   const density = options.density ?? DEFAULTS.density;
   const minRun = options.minRun ?? DEFAULTS.minRun;
 
-  const { columns, rows } = project(gray, width, height, threshold);
+  const structureFloor = options.structure ?? DEFAULTS.structure;
+  const axisDensity = options.axisDensity ?? DEFAULTS.axisDensity;
+
+  const { columns, rows, structure } = project(gray, width, height, threshold);
   const columnRuns = runsAbove(columns, density, minRun);
   const rowRuns = runsAbove(rows, density, minRun);
 
-  const { body, axis } = splitBodyAndAxis(columnRuns, width);
+  const axis = detectAxis(columns, width, axisDensity);
+
+  // 左界仍然用密度：那一側是工具列與最舊的 K 棒，沒有死留白的問題，
+  // 而且 detectChrome 還會再把工具列推掉一次。
+  const left = columnRuns[0]?.from ?? 0;
+  // 右界只在軸的左邊找 —— 軸的文字本身也有結構，不先排除就會一路吃到右緣。
+  const searchLimit = axis?.from ?? width;
+  const structural = lastStructuralColumn(structure, searchLimit, structureFloor);
+
+  // 找不到結構（整幅都是虛線或空白）時退回密度的右界，而不是回傳空框。
+  const right = structural < 0 ? (columnRuns[columnRuns.length - 1]?.to ?? width) : structural + 1;
+  const body: Range = { from: left, to: Math.max(left + 1, Math.min(right, searchLimit)) };
+
   const vertical =
     rowRuns.length === 0
       ? { from: 0, to: height }

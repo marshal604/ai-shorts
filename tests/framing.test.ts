@@ -54,7 +54,17 @@ describe('裁切框換算', () => {
   });
 
   it('沒有偵測到價格軸時裁到畫面右緣 —— 寧可留白也不要丟掉價位', () => {
-    const framing = plan('chart-0140');
+    // 用合成的 layout 直接驗這條退路，不綁在某張 fixture 上：
+    // 軸偵測修好之後兩張 fixture 都切得出軸了，但退路本身仍然要成立。
+    const noAxis = { body: { from: 0, to: 300 }, vertical: { from: 20, to: 340 } };
+    const framing = planFraming(
+      noAxis,
+      NO_CHROME,
+      SOURCE.width,
+      SOURCE.height,
+      SAMPLE.width,
+      SAMPLE.height,
+    );
     expect(framing.axis).toBeUndefined();
     expect(framing.body.x + framing.body.width).toBeGreaterThanOrEqual(SOURCE.width - 8);
   });
@@ -91,10 +101,16 @@ describe('共用的圖表矩形', () => {
     );
   });
 
-  it('矩形的比例貼近螢幕錄影的內容比例 —— 差太多會砍掉大量內容', () => {
+  it('矩形填滿整個圖表帶 —— 少用的每一列都是白白浪費的畫面', () => {
+    expect(CHART_RECT.scaledHeight).toBe(BANDS.chart.height);
+  });
+
+  it('矩形的比例貼近 K 線區的實測比例 —— 差太多會砍掉大量內容', () => {
+    // 曾經是 1.74，但那是死留白還被算成內容時量的（主體幾乎等於整幅寬度，
+    // 自然接近來源的 3258:1826）。排除死留白後重量，K 線區是 0.66 到 1.16。
     const aspect = CHART_RECT.scaledWidth / CHART_RECT.scaledHeight;
-    expect(aspect).toBeGreaterThan(1.6);
-    expect(aspect).toBeLessThan(1.9);
+    expect(aspect).toBeGreaterThan(1.15);
+    expect(aspect).toBeLessThan(1.5);
   });
 
   it('每個片段的裁切框都被調成同一個長寬比', () => {
@@ -115,18 +131,31 @@ describe('共用的圖表矩形', () => {
     }
   });
 
-  it('湊比例時不會把裁切放寬 —— 寬度決定看得到多少範圍', () => {
-    for (const name of FRAMES) {
-      expect(conformed(name).body.width).toBeLessThanOrEqual(plan(name).body.width);
-    }
-  });
-
-  it('優先順序：上緣不退 > 保留寬度 —— 寧可少看一點寬度也不要把工具列吃回來', () => {
+  it('湊比例時寧可往左擴，也不要把高度砍到蓋不住價格行為', () => {
+    // 舊規則是「保留寬度、調整高度」。內容偵測收緊之後，那條規則會把
+    // 1044 寬的裁切配成 599 高，而內容的垂直範圍是 1734 —— 三分之二的
+    // 價格行為被切掉。現在改成高度優先，寬度往左補。
     for (const name of FRAMES) {
       const before = plan(name);
       const after = conformed(name);
-      expect(after.body.y).toBeGreaterThanOrEqual(before.body.y);
-      expect(after.body.width).toBeLessThanOrEqual(before.body.width);
+      expect(after.body.height).toBeGreaterThan(before.body.height / 2);
+      expect(after.body.width).toBeGreaterThanOrEqual(before.body.width);
+    }
+  });
+
+  it('往左擴不會越過工具列的界線', () => {
+    const leftBound = 240;
+    for (const name of FRAMES) {
+      const framing = conformToChartAspect(plan(name), SOURCE.width, SOURCE.height, leftBound);
+      expect(framing.body.x).toBeGreaterThanOrEqual(leftBound);
+    }
+  });
+
+  it('比例一定湊得準 —— filtergraph 直接 scale 到矩形，比例對不上就是把 K 線壓扁', () => {
+    const target = CHART_RECT.scaledWidth / CHART_RECT.scaledHeight;
+    for (const name of FRAMES) {
+      const framing = conformed(name);
+      expect(framingWidth(framing) / framing.body.height).toBeCloseTo(target, 2);
     }
   });
 

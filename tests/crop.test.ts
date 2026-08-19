@@ -49,10 +49,13 @@ describe('內容分佈偵測', () => {
     }
   });
 
-  it('主體結束在畫面右側之前，死留白不算內容', () => {
+  it('主體結束在 K 棒結束的地方，死留白不算內容', () => {
+    // 這一幀的 K 棒大約在畫面三分之一處就結束，右邊全是還沒走到的空白。
+    // 舊的密度判準量出 0.78 —— 那不是 K 棒，是穿過死留白的 fib 水平虛線
+    // 與 session 垂直虛線；它們讓欄密度永遠不歸零，整片留白都被當成內容。
     const layout = detectContentLayout(frame('chart-0140'), WIDTH, HEIGHT);
-    expect(layout.body.to / WIDTH).toBeGreaterThan(0.7);
-    expect(layout.body.to / WIDTH).toBeLessThan(0.95);
+    expect(layout.body.to / WIDTH).toBeGreaterThan(0.2);
+    expect(layout.body.to / WIDTH).toBeLessThan(0.45);
   });
 
   it('主體與右側軸之間有間隙時，軸被單獨切出來', () => {
@@ -62,10 +65,36 @@ describe('內容分佈偵測', () => {
     expect(layout.axis!.to / WIDTH).toBeGreaterThan(0.95);
   });
 
+  it('主體與軸之間沒有間隙時，軸還是切得出來', () => {
+    // 這一幀的虛線把主體與軸連成同一個密度區段，靠「找間隙」永遠切不開。
+    // 軸自己的特徵才是可靠的：一整排右對齊的價格標籤，欄密度高一個量級。
+    const layout = detectContentLayout(frame('chart-0140'), WIDTH, HEIGHT);
+    expect(layout.axis).toBeDefined();
+    expect(layout.axis!.from / WIDTH).toBeGreaterThan(0.9);
+    expect(layout.axis!.to / WIDTH).toBeGreaterThan(0.95);
+  });
+
+  it('只有虛線的欄不算主體 —— 虛線沒有垂直結構', () => {
+    // 左半：整根貫穿的直線（像 K 棒的實體加影線）。
+    // 右半：只有幾條水平線經過（像死留白裡的 fib 線），垂直方向永遠只有一列。
+    const gray = new Uint8Array(WIDTH * HEIGHT);
+    for (let y = 0; y < HEIGHT; y += 1) {
+      for (let x = 0; x < WIDTH; x += 1) {
+        const onBar = x < WIDTH / 2 && x % 4 === 0 && y > 40 && y < 300;
+        const onFibLine = y % 60 === 0;
+        if (onBar || onFibLine) gray[y * WIDTH + x] = 200;
+      }
+    }
+    const layout = detectContentLayout(gray, WIDTH, HEIGHT);
+    expect(layout.body.to).toBeLessThanOrEqual(WIDTH / 2 + 8);
+  });
+
   it('兩幀的主體右緣不同 —— 這正是固定矩形不可行的原因', () => {
+    // 收緊之後兩幀相差 32 欄（5%）。比舊判準的差距小，因為那時的差距大半
+    // 來自死留白量到哪裡，而不是 K 棒實際畫到哪裡。
     const a = detectContentLayout(frame('chart-0140'), WIDTH, HEIGHT);
     const b = detectContentLayout(frame('chart-0044'), WIDTH, HEIGHT);
-    expect(Math.abs(a.body.to - b.body.to)).toBeGreaterThan(WIDTH * 0.05);
+    expect(Math.abs(a.body.to - b.body.to)).toBeGreaterThan(WIDTH * 0.03);
   });
 
   it('偵測範圍不會超出畫面', () => {

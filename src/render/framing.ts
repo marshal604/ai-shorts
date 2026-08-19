@@ -43,6 +43,11 @@ function toEvenOffset(value: number): number {
   return Math.max(0, Math.round(value / 2) * 2);
 }
 
+/** 夾在畫面內的偶數寬度 —— 超出右緣的裁切框會讓 ffmpeg 直接失敗。 */
+function clampWidth(x: number, width: number, sourceWidth: number): number {
+  return toEvenSize(Math.min(width, Math.max(2, sourceWidth - x)));
+}
+
 /*
  * 曾經有「放大」模式，只取主體右半以看清進場價與停損框。實測四次全部失敗：
  * 圖表右側有一大片留白，K 棒大約在畫面 80% 處就結束，所以「右側 55%」
@@ -68,9 +73,6 @@ export function planFraming(
   const top = layout.vertical.from * scaleY;
   const bottom = layout.vertical.to * scaleY;
 
-  const clampWidth = (x: number, width: number) =>
-    toEvenSize(Math.min(width, Math.max(2, sourceWidth - x)));
-
   const bodyX = toEvenOffset(bodyLeft * scaleX);
   const height = toEvenSize(Math.min(bottom - top, sourceHeight - toEvenOffset(top)));
 
@@ -85,7 +87,7 @@ export function planFraming(
       body: {
         x: bodyX,
         y: toEvenOffset(top),
-        width: clampWidth(bodyX, rightEdge - bodyX),
+        width: clampWidth(bodyX, rightEdge - bodyX, sourceWidth),
         height,
       },
     };
@@ -94,7 +96,7 @@ export function planFraming(
   const body: CropBox = {
     x: bodyX,
     y: toEvenOffset(top),
-    width: clampWidth(bodyX, layout.body.to * scaleX - bodyX),
+    width: clampWidth(bodyX, layout.body.to * scaleX - bodyX, sourceWidth),
     height,
   };
 
@@ -105,7 +107,7 @@ export function planFraming(
     axis: {
       x: axisX,
       y: body.y,
-      width: clampWidth(axisX, axisRight - axisX),
+      width: clampWidth(axisX, axisRight - axisX, sourceWidth),
       height: body.height,
     },
   };
@@ -135,7 +137,7 @@ export interface Placement {
  * 全幅與放大的差別因此變成「同樣大小的窗口裡看到多少範圍」，而不是
  * 「窗口本身變形」—— 那才是縮放該有的樣子。
  */
-const CHART_RECT_HEIGHT = 620;
+const CHART_RECT_HEIGHT = BANDS.chart.height;
 
 export const CHART_RECT: Placement = {
   scaledWidth: CANVAS.width,
@@ -145,11 +147,16 @@ export const CHART_RECT: Placement = {
 };
 
 /**
- * 矩形的比例貼近螢幕錄影裡圖表區的比例（實測約 1.75），而不是圖表帶的比例。
+ * 矩形填滿整個圖表帶，比例 1.33。
  *
- * 兩者差距若太大，湊比例時就得砍掉大量內容：以 4:3 的矩形去套 1.75 的畫面，
- * 全幅模式會被從左邊切掉三分之一，結果與放大模式看起來一模一樣 ——
- * 兩種構圖就此塌陷成同一個視角。
+ * 曾經是 620 高、比例 1.74，理由是「貼近螢幕錄影裡圖表區的比例（實測約
+ * 1.75）」。那個 1.75 是在死留白還被算成內容的時候量的 —— 主體幾乎等於
+ * 整幅寬度，量出來當然接近來源的 3258:1826。內容偵測學會排除死留白之後
+ * 重新量，K 線區的實際比例是 0.66 到 1.16（六個取樣點），比 1.74 矮胖得多。
+ *
+ * 繼續用 1.74 的後果不是「切掉一點」：以 1044 寬的裁切去湊 1.74，高度只剩
+ * 599，而內容的垂直範圍是 1734 —— 三分之二的價格範圍會被切掉。改成 1.33
+ * 之後既貼近實測比例，又順便把圖表帶剩下的 190 像素用掉。
  */
 const TARGET_ASPECT = CANVAS.width / CHART_RECT_HEIGHT;
 
@@ -161,50 +168,54 @@ export function placeInChartBand(): Placement {
 /**
  * 把裁切框調成共用矩形的長寬比。
  *
- * **保留寬度，調整高度。** 寬度就是縮放程度 —— 放大模式取窄、全幅模式取寬，
- * 那是兩者唯一的差別。若改成調整寬度來湊比例，所有片段的高度都一樣，
- * 寬度就會被算成同一個值，兩種模式看起來完全相同。
+ * **先蓋住內容，再湊比例。** 舊規則是「保留寬度、調整高度」，那是為了讓
+ * 全幅與放大兩種模式靠寬度區分；放大模式移除之後這個理由就消失了，而它
+ * 的代價很實際 —— 內容偵測收緊之後裁切變窄，同一條規則會把高度一路砍到
+ * 內容垂直範圍的三分之一，價格行為直接被切掉。
  *
- * 高度以內容的垂直中心為準往兩側取，價格行為才會留在畫面裡。
- * 只有在需要的高度超出畫面時，才退而收縮寬度。
+ * 現在高度優先：至少要蓋住內容的垂直範圍，再由比例反推寬度。寬度不夠時
+ * 往左擴（那裡是更早的 K 棒，比右側的死留白有用），擴到畫面左緣仍不夠，
+ * 才回頭壓低高度以維持比例 —— 比例不能妥協，filtergraph 是直接 scale 到
+ * 矩形，比例對不上就是把 K 線壓扁。
+ *
+ * 上緣一律不往回退：內容偵測已經把頂部工具列排除在外。
  */
 export function conformToChartAspect(
   framing: FramingPlan,
   sourceWidth: number,
   sourceHeight: number,
+  leftBound = 0,
 ): FramingPlan {
   const axisWidth = framing.axis?.width ?? 0;
-  const totalWidth = framing.body.width + axisWidth;
-  const centre = framing.body.y + framing.body.height / 2;
-
-  // 上緣不可以往回退：內容偵測已經把頂部工具列排除在外，
-  // 若為了置中而把上緣往上拉，工具列會被吃回畫面裡。
+  const contentWidth = framing.body.width + axisWidth;
   const contentTop = framing.body.y;
-  const wantedHeight = toEvenSize(totalWidth / TARGET_ASPECT);
+  const centre = contentTop + framing.body.height / 2;
 
-  if (wantedHeight <= sourceHeight - contentTop) {
-    const y = toEvenOffset(
-      Math.max(contentTop, Math.min(centre - wantedHeight / 2, sourceHeight - wantedHeight)),
-    );
-    return {
-      body: { ...framing.body, y, height: wantedHeight },
-      ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y, height: wantedHeight } }),
-    };
-  }
-
-  // 高度放不下（在不侵入介面元件的前提下）：改為收縮寬度，
-  // 右緣不動（那裡是價格軸與最新的 K 棒）。
-  const height = toEvenSize(sourceHeight - contentTop);
-  const bodyWidth = toEvenSize(Math.max(2, height * TARGET_ASPECT - axisWidth));
+  const availableHeight = sourceHeight - contentTop;
+  // 右緣不動 —— 那裡是價格軸與最新的 K 棒；所以能擴的方向只有左邊。
   const bodyRight = framing.body.x + framing.body.width;
+  // 但左邊擴到工具列就要停。leftBound 是 detectChrome 量出來的界線；
+  // 少了這道夾制，往左擴會把側邊工具列整條吃回畫面裡（實測會多吃 117 像素）。
+  const maxTotalWidth = bodyRight - leftBound + axisWidth;
+
+  const wantedHeight = Math.min(
+    Math.max(framing.body.height, contentWidth / TARGET_ASPECT),
+    availableHeight,
+  );
+  // 擴不到需要的寬度時，用擴得到的寬度反推高度，比例才不會走樣。
+  const totalWidth = Math.min(wantedHeight * TARGET_ASPECT, maxTotalWidth);
+  const height = toEvenSize(Math.min(availableHeight, totalWidth / TARGET_ASPECT));
+  const bodyWidth = toEvenSize(
+    Math.max(2, Math.min(height * TARGET_ASPECT - axisWidth, bodyRight - leftBound)),
+  );
+  const bodyX = toEvenOffset(Math.max(leftBound, bodyRight - bodyWidth));
+  const y = toEvenOffset(
+    Math.max(contentTop, Math.min(centre - height / 2, sourceHeight - height)),
+  );
+
   return {
-    body: {
-      x: toEvenOffset(Math.max(0, bodyRight - bodyWidth)),
-      y: contentTop,
-      width: bodyWidth,
-      height,
-    },
-    ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y: contentTop, height } }),
+    body: { x: bodyX, y, width: clampWidth(bodyX, bodyWidth, sourceWidth), height },
+    ...(framing.axis === undefined ? {} : { axis: { ...framing.axis, y, height } }),
   };
 }
 
@@ -292,5 +303,6 @@ export async function planCutFraming(
   const sample = await sampleFrame(video, midpoint, sourceWidth, sourceHeight);
   const layout = detectContentLayout(sample.gray, sample.width, sample.height);
   const framing = planFraming(layout, chrome, sourceWidth, sourceHeight, sample.width, sample.height);
-  return conformToChartAspect(framing, sourceWidth, sourceHeight);
+  const leftBound = toEvenOffset(chrome.left * sourceWidth);
+  return conformToChartAspect(framing, sourceWidth, sourceHeight, leftBound);
 }
